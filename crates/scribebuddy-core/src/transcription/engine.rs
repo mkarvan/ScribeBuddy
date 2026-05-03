@@ -2,7 +2,6 @@ use crate::{SessionConfig, Speaker, TranscriptSegment};
 use super::model::ModelManager;
 use crate::audio::capture::{is_silence, TARGET_SAMPLE_RATE};
 use anyhow::{Context, Result};
-use chrono::Duration;
 use crossbeam_channel::Sender;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -43,6 +42,11 @@ impl WhisperEngine {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
 
+        // Disable timestamp tokens so Whisper never hits "single timestamp ending -
+        // skip entire chunk" (which discards valid decoded speech when the last
+        // segment's t0==t1). We track timing ourselves via chunk offsets.
+        params.set_no_timestamps(true);
+
         // Configure language: "auto"/empty → auto-detect; specific code → force language
         // Box::leak gives a &'static str so it satisfies FullParams<'static, 'static>.
         // One small string per engine creation is an acceptable trade-off.
@@ -81,7 +85,7 @@ impl WhisperEngine {
         &mut self,
         samples: &[f32],
         speaker: Speaker,
-        start_offset: Duration,
+        start_offset_secs: i64,
         segment_tx: &Sender<TranscriptSegment>,
     ) -> Result<()> {
         if samples.len() < self.chunk_duration_samples / 2 {
@@ -134,10 +138,9 @@ impl WhisperEngine {
 
         if !text_parts.is_empty() {
             let text = text_parts.join(" ");
-            let end_offset = start_offset + Duration::milliseconds(num_samples as i64 / 16);
-
-            let segment = TranscriptSegment::new(speaker, text, start_offset, end_offset);
-
+            let chunk_secs = num_samples as i64 / TARGET_SAMPLE_RATE as i64;
+            let end_offset_secs = start_offset_secs + chunk_secs;
+            let segment = TranscriptSegment::new(speaker, text, start_offset_secs, end_offset_secs);
             let _ = segment_tx.try_send(segment);
         }
 

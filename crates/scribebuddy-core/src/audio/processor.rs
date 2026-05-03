@@ -2,7 +2,6 @@ use crate::audio::capture::{is_silence, AudioConsumer};
 use crate::audio::resampler::AudioResampler;
 use crate::transcription::engine::WhisperEngine;
 use crate::{SessionConfig, Speaker, TranscriptSegment};
-use chrono::Duration;
 use crossbeam_channel::Sender;
 use ringbuf::traits::Consumer;
 use std::io::Write;
@@ -94,9 +93,9 @@ impl AudioProcessor {
         #[cfg(debug_assertions)]
         let mut wav_written = false;
 
-        let chunk_dur = Duration::milliseconds((self.config.chunk_duration_secs * 1000.0) as i64);
-        let mut you_offset = Duration::zero();
-        let mut remote_offset = Duration::zero();
+        let chunk_secs = self.config.chunk_duration_secs as i64;
+        let mut you_offset_secs: i64 = 0;
+        let mut remote_offset_secs: i64 = 0;
         let silence_threshold = self.config.silence_threshold_rms;
 
         while self.running.load(Ordering::SeqCst) {
@@ -128,7 +127,7 @@ impl AudioProcessor {
                             if let Err(e) = engine.process_chunk(
                                 &resampled,
                                 Speaker::You,
-                                you_offset,
+                                you_offset_secs,
                                 &self.segment_tx,
                             ) {
                                 log::error!("You Whisper error: {}", e);
@@ -140,7 +139,7 @@ impl AudioProcessor {
                 } else {
                     log::debug!("[proc] you chunk silent (rms={:.4}), skipped", rms_you);
                 }
-                you_offset = you_offset + chunk_dur;
+                you_offset_secs += chunk_secs;
                 processed = true;
             }
 
@@ -173,7 +172,7 @@ impl AudioProcessor {
                             if let Err(e) = engine.process_chunk(
                                 &resampled,
                                 Speaker::Remote,
-                                remote_offset,
+                                remote_offset_secs,
                                 &self.segment_tx,
                             ) {
                                 log::error!("Remote Whisper error: {}", e);
@@ -185,7 +184,7 @@ impl AudioProcessor {
                 } else {
                     log::debug!("[proc] remote chunk silent (rms={:.4} < threshold {:.4}), skipped", rms_raw, silence_threshold);
                 }
-                remote_offset = remote_offset + chunk_dur;
+                remote_offset_secs += chunk_secs;
                 processed = true;
             }
 

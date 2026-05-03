@@ -24,8 +24,9 @@ impl std::fmt::Display for Speaker {
 pub struct TranscriptSegment {
     pub speaker: Speaker,
     pub text: String,
-    pub start_time: chrono::Duration,
-    pub end_time: chrono::Duration,
+    /// Seconds since session start (integer, serializes as a plain JSON number).
+    pub start_time: i64,
+    pub end_time: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -125,7 +126,7 @@ impl Default for SessionConfig {
             chunk_duration_secs: 3.0,
             model_size: ModelSize::default(),
             use_screencapturekit: true,
-            silence_threshold_rms: 0.01,
+            silence_threshold_rms: 0.003,
             language: "en".to_string(),
         }
     }
@@ -147,7 +148,7 @@ mod tests {
         assert_eq!(c.chunk_duration_secs, 3.0);
         assert_eq!(c.model_size, ModelSize::Small);
         assert!(c.use_screencapturekit);
-        assert_eq!(c.silence_threshold_rms, 0.01);
+        assert_eq!(c.silence_threshold_rms, 0.003);
         assert_eq!(c.language, "en");
         assert!(!c.is_multilingual());
     }

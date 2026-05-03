@@ -32,12 +32,19 @@ impl AppState {
         }
     }
 
-    /// Load config from disk; returns default on any error (missing file, bad JSON, etc.)
+    /// Load config from disk; returns default on any error (missing file, bad JSON, etc.).
+    /// Migrates any field values that used old defaults.
     pub fn load_config(path: &Path) -> SessionConfig {
-        std::fs::read_to_string(path)
+        let mut config: SessionConfig = std::fs::read_to_string(path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Migrate: old default was 0.01, which is too high for many mics (typical
+        // quiet-room mic RMS is 0.003–0.008). Reset to new default if unchanged.
+        if (config.silence_threshold_rms - 0.01).abs() < f32::EPSILON {
+            config.silence_threshold_rms = SessionConfig::default().silence_threshold_rms;
+        }
+        config
     }
 
     /// Persist current config to disk. Called after every setter command.

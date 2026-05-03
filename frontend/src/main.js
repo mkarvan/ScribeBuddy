@@ -115,31 +115,5 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // --- Poll fallback for segments (in case event channel is unavailable) ---
-    let pollInterval = null;
-    let lastSegmentCount = 0;
-
-    const pollSegments = async () => {
-        try {
-            const segments = await window.__TAURI__.core.invoke('get_transcript');
-            if (segments.length > lastSegmentCount) {
-                for (let i = lastSegmentCount; i < segments.length; i++) {
-                    transcript.appendSegment(segments[i]);
-                }
-                controls.updateSegmentCount(segments.length);
-                lastSegmentCount = segments.length;
-            }
-        } catch (_) {}
-    };
-
-    window.__TAURI__.event.listen('session-state-changed', (event) => {
-        const state = event.payload;
-        if (state === 'Recording') {
-            pollInterval = setInterval(pollSegments, 500);
-        } else if (state === 'Idle' || state === 'Stopped') {
-            clearInterval(pollInterval);
-        }
-    });
-
     controls.updateButtons('Idle');
 });

@@ -50,17 +50,11 @@ impl Default for TranscriptAccumulator {
 mod tests {
     use super::*;
     use crate::Speaker;
-    use chrono::Duration;
 
     #[test]
     fn test_add_and_retrieve() {
         let acc = TranscriptAccumulator::new();
-        let seg = TranscriptSegment::new(
-            Speaker::You,
-            "test".into(),
-            Duration::seconds(0),
-            Duration::seconds(2),
-        );
+        let seg = TranscriptSegment::new(Speaker::You, "test".into(), 0, 2);
         acc.add_segment(seg);
         assert_eq!(acc.count(), 1);
         assert_eq!(acc.get_segments()[0].text, "test");
@@ -69,12 +63,7 @@ mod tests {
     #[test]
     fn test_empty_segment_ignored() {
         let acc = TranscriptAccumulator::new();
-        let seg = TranscriptSegment::new(
-            Speaker::You,
-            "   ".into(),
-            Duration::seconds(0),
-            Duration::seconds(1),
-        );
+        let seg = TranscriptSegment::new(Speaker::You, "   ".into(), 0, 1);
         acc.add_segment(seg);
         assert_eq!(acc.count(), 0);
     }

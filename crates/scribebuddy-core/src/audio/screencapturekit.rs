@@ -129,21 +129,34 @@ impl ScreenCaptureKitSource {
         }
     }
 
-    /// Returns running applications visible to SCK.
+    /// Returns user-facing applications visible to SCK.
+    /// Filters to only apps that own at least one window, which excludes background
+    /// system processes (Dock, Wallpaper, WindowServer, etc.).
     /// Falls back to a static list when Screen Recording permission hasn't been granted yet.
     pub fn enumerate_running_apps() -> Vec<crate::RunningApp> {
         match SCShareableContent::get() {
             Ok(content) => {
-                let apps = content.applications();
-                if apps.is_empty() {
-                    return Self::static_fallback();
-                }
-                apps.into_iter()
+                // Collect bundle IDs of apps that own at least one window
+                let windows = content.windows();
+                let mut seen_ids = std::collections::HashSet::new();
+                let mut result: Vec<crate::RunningApp> = windows
+                    .into_iter()
+                    .map(|w| w.owning_application())
+                    .filter(|a| {
+                        let bid = a.bundle_identifier();
+                        !bid.is_empty() && !a.application_name().is_empty() && seen_ids.insert(bid)
+                    })
                     .map(|a| crate::RunningApp {
                         bundle_id: a.bundle_identifier(),
                         name: a.application_name(),
                     })
-                    .collect()
+                    .collect();
+
+                if result.is_empty() {
+                    return Self::static_fallback();
+                }
+                result.sort_by(|a, b| a.name.cmp(&b.name));
+                result
             }
             Err(e) => {
                 log::warn!("SCK enumerate_running_apps failed (permission?): {:?}", e);

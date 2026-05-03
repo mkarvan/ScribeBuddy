@@ -109,18 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('export-btn').addEventListener('click', async () => {
         try {
-            const markdown = await window.__TAURI__.core.invoke('export_markdown');
-            const { save } = window.__TAURI__.plugins.dialog;
-
-            const filePath = await save({
-                title: 'Export Transcript',
-                defaultPath: `meeting-${new Date().toISOString().slice(0, 10)}.md`,
-                filters: [{ name: 'Markdown', extensions: ['md'] }],
-            });
-
-            if (filePath) {
-                await window.__TAURI__.plugins.fs.writeTextFile(filePath, markdown);
-            }
+            await window.__TAURI__.core.invoke('export_markdown_to_file');
         } catch (err) {
             errorUI.show(`Export failed: ${err}`);
         }

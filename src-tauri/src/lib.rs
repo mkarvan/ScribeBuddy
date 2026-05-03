@@ -53,6 +53,7 @@ pub fn run() {
             commands::stop_session,
             commands::get_transcript,
             commands::export_markdown,
+            commands::export_markdown_to_file,
             commands::add_transcript_segment,
             commands::set_language,
         ])

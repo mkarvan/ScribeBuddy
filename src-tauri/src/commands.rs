@@ -339,6 +339,41 @@ pub fn export_markdown(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn export_markdown_to_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let segments = state.get_segments();
+    if segments.is_empty() {
+        return Err("No transcript to export".to_string());
+    }
+
+    let content = MarkdownExporter::export(&segments);
+    let default_name = format!(
+        "meeting-{}.md",
+        chrono::Local::now().format("%Y-%m-%d")
+    );
+
+    let file_path = app
+        .dialog()
+        .file()
+        .set_title("Export Transcript")
+        .set_file_name(&default_name)
+        .add_filter("Markdown", &["md"])
+        .blocking_save_file();
+
+    match file_path {
+        Some(tauri_plugin_dialog::FilePath::Path(path)) => {
+            std::fs::write(&path, content).map_err(|e| e.to_string())?;
+            Ok(true)
+        }
+        _ => Ok(false), // User cancelled or non-filesystem path
+    }
+}
+
+#[tauri::command]
 pub fn add_transcript_segment(
     state: State<'_, AppState>,
     segment: TranscriptSegment,

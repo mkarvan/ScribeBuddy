@@ -1,6 +1,10 @@
 # Rust build output
 target/
 
+# Claude Code
+.claude/
+.claire/
+
 # macOS
 .DS_Store
 .AppleDouble

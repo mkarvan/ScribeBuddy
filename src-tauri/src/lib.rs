@@ -16,8 +16,17 @@ pub fn run() {
                 log::error!("Failed to setup tray: {}", e);
             }
 
-            // Manage app state
-            app.manage(AppState::new());
+            // Resolve platform app data dir (~/Library/Application Support/<bundle-id> on macOS)
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("Cannot resolve app data directory");
+            std::fs::create_dir_all(&data_dir)
+                .expect("Cannot create app data directory");
+
+            let config_path = data_dir.join("config.json");
+            let config = AppState::load_config(&config_path);
+            app.manage(AppState::new(config, config_path));
 
             log::info!("ScribeBuddy initialized");
             Ok(())
@@ -45,6 +54,7 @@ pub fn run() {
             commands::get_transcript,
             commands::export_markdown,
             commands::add_transcript_segment,
+            commands::set_language,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ScribeBuddy");

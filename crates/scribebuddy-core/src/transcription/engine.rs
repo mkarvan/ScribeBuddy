@@ -18,9 +18,10 @@ pub struct WhisperEngine {
 impl WhisperEngine {
     pub fn new(config: &SessionConfig) -> Result<(Self, ModelManager)> {
         let model_mgr = ModelManager::new()?;
-        let model_path = model_mgr.model_path(&config.model_size);
+        let multilingual = config.is_multilingual();
+        let model_path = model_mgr.model_path(&config.model_size, multilingual);
 
-        if !model_mgr.is_model_available(&config.model_size) {
+        if !model_mgr.is_model_available(&config.model_size, multilingual) {
             anyhow::bail!(
                 "Model not found at {:?}. Download it first.",
                 model_path
@@ -33,7 +34,19 @@ impl WhisperEngine {
         )
         .context("Failed to load Whisper model")?;
 
-        let params = whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
+        let mut params =
+            whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
+
+        // Configure language: "auto"/empty → auto-detect; specific code → force language
+        // Box::leak gives a &'static str so it satisfies FullParams<'static, 'static>.
+        // One small string per engine creation is an acceptable trade-off.
+        let lang = config.language.trim().to_string();
+        if lang.is_empty() || lang == "auto" {
+            params.set_detect_language(true);
+        } else {
+            let lang_static: &'static str = Box::leak(lang.into_boxed_str());
+            params.set_language(Some(lang_static));
+        }
 
         let chunk_duration_samples =
             (config.chunk_duration_secs * TARGET_SAMPLE_RATE as f32) as usize;

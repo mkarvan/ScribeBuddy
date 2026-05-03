@@ -15,21 +15,22 @@ impl ModelManager {
         Ok(Self { models_dir })
     }
 
-    pub fn model_path(&self, size: &ModelSize) -> PathBuf {
-        self.models_dir.join(size.filename())
+    pub fn model_path(&self, size: &ModelSize, multilingual: bool) -> PathBuf {
+        self.models_dir.join(size.filename(multilingual))
     }
 
-    pub fn is_model_available(&self, size: &ModelSize) -> bool {
-        self.model_path(size).exists()
+    pub fn is_model_available(&self, size: &ModelSize, multilingual: bool) -> bool {
+        self.model_path(size, multilingual).exists()
     }
 
     pub fn download_model(
         &self,
         size: &ModelSize,
+        multilingual: bool,
         progress_callback: impl Fn(u64, u64) + Send + 'static,
     ) -> Result<()> {
-        let url = size.download_url();
-        let dest = self.model_path(size);
+        let url = size.download_url(multilingual);
+        let dest = self.model_path(size, multilingual);
 
         if dest.exists() {
             log::info!("Model already exists at {:?}", dest);
@@ -38,7 +39,7 @@ impl ModelManager {
 
         log::info!("Downloading model from {} to {:?}", url, dest);
 
-        let response = ureq::get(url)
+        let response = ureq::get(&url)
             .call()
             .context("Failed to start model download")?;
 
@@ -67,7 +68,7 @@ impl ModelManager {
 
         file.flush().context("Failed to flush model file")?;
 
-        log::info!("Model downloaded successfully: {:.1} MB", downloaded as f64 / 1_048_576.0);
+        log::info!("Model downloaded: {:.1} MB", downloaded as f64 / 1_048_576.0);
         Ok(())
     }
 }
@@ -96,9 +97,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_model_path() {
+    fn test_model_path_english() {
         let mgr = ModelManager::new().unwrap();
-        let path = mgr.model_path(&ModelSize::Small);
-        assert!(path.ends_with("ggml-small.en.bin"));
+        let path = mgr.model_path(&ModelSize::Small, false);
+        assert!(
+            path.to_string_lossy().ends_with("ggml-small.en.bin"),
+            "path: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn test_model_path_multilingual() {
+        let mgr = ModelManager::new().unwrap();
+        let path = mgr.model_path(&ModelSize::Small, true);
+        assert!(
+            path.to_string_lossy().ends_with("ggml-small.bin"),
+            "path: {:?}",
+            path
+        );
+        // Must NOT be the .en variant
+        assert!(!path.to_string_lossy().ends_with(".en.bin"), "path: {:?}", path);
+    }
+
+    #[test]
+    fn test_model_path_large_always_multilingual() {
+        let mgr = ModelManager::new().unwrap();
+        // Large is always multilingual regardless of the flag
+        let en_path = mgr.model_path(&ModelSize::Large, false);
+        let ml_path = mgr.model_path(&ModelSize::Large, true);
+        assert!(en_path.to_string_lossy().ends_with("ggml-large-v3.bin"));
+        assert_eq!(en_path, ml_path);
+    }
+
+    #[test]
+    fn test_model_not_available_when_missing() {
+        let mgr = ModelManager::new().unwrap();
+        // Use Large multilingual — almost certainly not downloaded in test env
+        // (we only check the logic, not the actual download)
+        let path = mgr.model_path(&ModelSize::Large, true);
+        let available = mgr.is_model_available(&ModelSize::Large, true);
+        // Path must point to the correct file regardless of whether it exists
+        assert!(path.to_string_lossy().ends_with("ggml-large-v3.bin"));
+        // If the file doesn't exist, is_model_available must return false
+        if !path.exists() {
+            assert!(!available);
+        }
     }
 }

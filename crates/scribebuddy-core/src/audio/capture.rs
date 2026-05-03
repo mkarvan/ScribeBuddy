@@ -35,3 +35,62 @@ pub fn rms_energy(samples: &[f32]) -> f32 {
 pub fn is_silence(samples: &[f32], threshold: f32) -> bool {
     rms_energy(samples) < threshold
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rms_energy_empty() {
+        assert_eq!(rms_energy(&[]), 0.0);
+    }
+
+    #[test]
+    fn rms_energy_dc_signal() {
+        // Constant signal at amplitude A → RMS should equal A
+        let samples = vec![0.5f32; 1000];
+        let rms = rms_energy(&samples);
+        assert!((rms - 0.5).abs() < 1e-5, "rms={}", rms);
+    }
+
+    #[test]
+    fn rms_energy_zero_signal() {
+        let samples = vec![0.0f32; 512];
+        assert_eq!(rms_energy(&samples), 0.0);
+    }
+
+    #[test]
+    fn rms_energy_full_scale() {
+        // Full-scale sine wave: RMS ≈ 1/√2 ≈ 0.7071
+        let samples: Vec<f32> = (0..16000)
+            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin())
+            .collect();
+        let rms = rms_energy(&samples);
+        assert!((rms - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001, "rms={}", rms);
+    }
+
+    #[test]
+    fn is_silence_below_threshold() {
+        let samples = vec![0.001f32; 512];
+        assert!(is_silence(&samples, 0.01));
+    }
+
+    #[test]
+    fn is_silence_above_threshold() {
+        let samples = vec![0.5f32; 512];
+        assert!(!is_silence(&samples, 0.01));
+    }
+
+    #[test]
+    fn is_silence_at_threshold_is_not_silent() {
+        // is_silence uses strict < so energy equal to threshold counts as audible
+        let samples = vec![0.01f32; 512];
+        let rms = rms_energy(&samples);
+        assert!(!is_silence(&samples, rms));
+    }
+
+    #[test]
+    fn is_silence_empty_is_silent() {
+        assert!(is_silence(&[], 0.01));
+    }
+}

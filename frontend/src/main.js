@@ -14,6 +14,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     settings.bind();
     errorUI.bind();
 
+    // Restore persisted settings from backend
+    try {
+        const savedConfig = await window.__TAURI__.core.invoke('get_config');
+        settings.loadFromConfig(savedConfig);
+        // Apply saved app selection now that the <select> is populated
+        settings.applyPendingApp();
+    } catch (err) {
+        console.warn('Could not restore settings:', err);
+    }
+
     // --- Model download events ---
     window.__TAURI__.event.listen('model-download-started', () => {
         downloadUI.show();

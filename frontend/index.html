@@ -29,6 +29,7 @@
                     <option value="base">Base (~142MB)</option>
                     <option value="small" selected>Small (~461MB)</option>
                     <option value="medium">Medium (~1.5GB)</option>
+                    <option value="large">Large-v3 (~3.1GB, multilingual)</option>
                 </select>
                 <button id="download-model-btn" class="sm-btn" title="Download model">&#x21e9;</button>
             </div>
@@ -43,6 +44,25 @@
                 <select id="capture-mode">
                     <option value="sck" selected>ScreenCaptureKit</option>
                     <option value="blackhole">BlackHole/cpal</option>
+                </select>
+            </div>
+
+            <div class="setting-row">
+                <label for="language-select">Language:</label>
+                <select id="language-select">
+                    <option value="en" selected>English (en)</option>
+                    <option value="auto">Auto-detect</option>
+                    <option value="es">Spanish (es)</option>
+                    <option value="fr">French (fr)</option>
+                    <option value="de">German (de)</option>
+                    <option value="it">Italian (it)</option>
+                    <option value="pt">Portuguese (pt)</option>
+                    <option value="nl">Dutch (nl)</option>
+                    <option value="pl">Polish (pl)</option>
+                    <option value="ru">Russian (ru)</option>
+                    <option value="zh">Chinese (zh)</option>
+                    <option value="ja">Japanese (ja)</option>
+                    <option value="ko">Korean (ko)</option>
                 </select>
             </div>
         </div>

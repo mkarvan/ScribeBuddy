@@ -5,6 +5,7 @@ export class Settings {
         this.chunkSlider = document.getElementById('chunk-slider');
         this.chunkValueEl = document.getElementById('chunk-value');
         this.captureMode = document.getElementById('capture-mode');
+        this.languageSelect = document.getElementById('language-select');
         this.refreshBtn = document.getElementById('refresh-apps-btn');
         this.downloadBtn = document.getElementById('download-model-btn');
     }
@@ -65,6 +66,11 @@ export class Settings {
         await window.__TAURI__.core.invoke('set_capture_mode', { useScreencapturekit: useSCK });
     }
 
+    async setLanguage(language) {
+        await window.__TAURI__.core.invoke('set_language', { language });
+        await this.checkModel();
+    }
+
     bind() {
         this.appSelect.addEventListener('change', () => {
             this.selectApp(this.appSelect.value);
@@ -84,8 +90,55 @@ export class Settings {
             this.setCaptureMode(this.captureMode.value === 'sck');
         });
 
+        if (this.languageSelect) {
+            this.languageSelect.addEventListener('change', () => {
+                this.setLanguage(this.languageSelect.value);
+            });
+        }
+
         this.refreshBtn.addEventListener('click', () => this.loadApps());
 
         this.downloadBtn.addEventListener('click', () => this.downloadModel());
+    }
+
+    /**
+     * Populate all UI controls from a persisted SessionConfig.
+     * Rust enum variants are serialised as strings ("Small", "Tiny", etc.).
+     */
+    loadFromConfig(config) {
+        if (!config) return;
+
+        if (config.model_size && this.modelSelect) {
+            const map = { Tiny: 'tiny', Base: 'base', Small: 'small', Medium: 'medium', Large: 'large' };
+            this.modelSelect.value = map[config.model_size] ?? config.model_size.toLowerCase();
+        }
+
+        if (config.language && this.languageSelect) {
+            this.languageSelect.value = config.language;
+        }
+
+        if (config.chunk_duration_secs != null && this.chunkSlider) {
+            this.chunkSlider.value = config.chunk_duration_secs;
+            if (this.chunkValueEl) {
+                this.chunkValueEl.textContent = `${config.chunk_duration_secs}s`;
+            }
+        }
+
+        if (config.use_screencapturekit != null && this.captureMode) {
+            this.captureMode.value = config.use_screencapturekit ? 'sck' : 'blackhole';
+        }
+
+        // Stash the saved bundle ID so applyPendingApp() can set it after loadApps() runs
+        this._pendingBundleId = config.target_app_bundle_id ?? null;
+    }
+
+    /**
+     * Apply a saved app selection after the app <select> has been populated by loadApps().
+     */
+    applyPendingApp() {
+        if (this._pendingBundleId && this.appSelect) {
+            this.appSelect.value = this._pendingBundleId;
+            this._pendingBundleId = null;
+        }
     }
 }

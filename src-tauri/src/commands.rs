@@ -32,9 +32,8 @@ pub fn set_target_app(
     state: State<'_, AppState>,
     bundle_id: String,
 ) -> Result<(), String> {
-    let mut config = state.config.lock();
-    config.target_app_bundle_id = Some(bundle_id);
-    Ok(())
+    { state.config.lock().target_app_bundle_id = Some(bundle_id); }
+    state.save_config()
 }
 
 #[tauri::command]
@@ -47,12 +46,20 @@ pub fn set_model_size(
         "base" => ModelSize::Base,
         "small" => ModelSize::Small,
         "medium" => ModelSize::Medium,
+        "large" => ModelSize::Large,
         _ => return Err(format!("Unknown model size: {}", size)),
     };
+    { state.config.lock().model_size = model_size; }
+    state.save_config()
+}
 
-    let mut config = state.config.lock();
-    config.model_size = model_size;
-    Ok(())
+#[tauri::command]
+pub fn set_language(
+    state: State<'_, AppState>,
+    language: String,
+) -> Result<(), String> {
+    { state.config.lock().language = language; }
+    state.save_config()
 }
 
 #[tauri::command]
@@ -60,9 +67,8 @@ pub fn set_chunk_duration(
     state: State<'_, AppState>,
     seconds: f32,
 ) -> Result<(), String> {
-    let mut config = state.config.lock();
-    config.chunk_duration_secs = seconds.clamp(1.0, 5.0);
-    Ok(())
+    { state.config.lock().chunk_duration_secs = seconds.clamp(1.0, 5.0); }
+    state.save_config()
 }
 
 #[tauri::command]
@@ -70,9 +76,8 @@ pub fn set_capture_mode(
     state: State<'_, AppState>,
     use_screencapturekit: bool,
 ) -> Result<(), String> {
-    let mut config = state.config.lock();
-    config.use_screencapturekit = use_screencapturekit;
-    Ok(())
+    { state.config.lock().use_screencapturekit = use_screencapturekit; }
+    state.save_config()
 }
 
 #[tauri::command]
@@ -85,9 +90,9 @@ pub fn get_config(state: State<'_, AppState>) -> Result<SessionConfig, String> {
 pub fn check_model_available(
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let config = state.config.lock();
+    let config = state.config.lock().clone();
     let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
-    Ok(model_mgr.is_model_available(&config.model_size))
+    Ok(model_mgr.is_model_available(&config.model_size, config.is_multilingual()))
 }
 
 #[tauri::command]
@@ -96,9 +101,10 @@ pub async fn download_model(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let config = state.config.lock().clone();
+    let multilingual = config.is_multilingual();
     let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
 
-    if model_mgr.is_model_available(&config.model_size) {
+    if model_mgr.is_model_available(&config.model_size, multilingual) {
         let _ = app.emit("model-download-progress", serde_json::json!({
             "downloaded": 100u64,
             "total": 100u64,
@@ -113,6 +119,7 @@ pub async fn download_model(
     let app_clone = app.clone();
     let result = model_mgr.download_model(
         &config.model_size,
+        multilingual,
         move |downloaded, total| {
             let _ = app_clone.emit("model-download-progress", serde_json::json!({
                 "downloaded": downloaded,
@@ -152,7 +159,7 @@ pub async fn start_session(
 
     let config = state.config.lock().clone();
     let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
-    if !model_mgr.is_model_available(&config.model_size) {
+    if !model_mgr.is_model_available(&config.model_size, config.is_multilingual()) {
         return Err("Whisper model not found. Download it first.".to_string());
     }
 
@@ -307,6 +314,12 @@ pub async fn stop_session(
 
     *state.session_state.write() = SessionState::Stopped;
     let _ = app.emit("session-state-changed", SessionState::Stopped);
+
+    // Auto-save transcript; log warning but don't fail the stop command
+    if let Err(e) = state.save_session_transcript() {
+        log::warn!("Auto-save transcript failed: {}", e);
+    }
+
     log::info!("Session stopped");
     Ok(())
 }

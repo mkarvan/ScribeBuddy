@@ -49,3 +49,36 @@ impl AudioResampler {
         self.output_rate
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resample_44100_to_16000() {
+        let chunk = (44100.0_f32 * 3.0) as usize;
+        let mut r = AudioResampler::new(44100, 16000, chunk).unwrap();
+        let out = r.resample(&vec![0.0f32; chunk]).unwrap();
+        let expected = (16000.0_f32 * 3.0) as usize;
+        assert!(
+            (out.len() as i64 - expected as i64).unsigned_abs() < (expected / 100) as u64,
+            "got {} expected ~{}",
+            out.len(),
+            expected
+        );
+    }
+
+    #[test]
+    fn resample_48000_to_16000() {
+        let chunk = (48000.0_f32 * 3.0) as usize;
+        let mut r = AudioResampler::new(48000, 16000, chunk).unwrap();
+        let out = r.resample(&vec![0.0f32; chunk]).unwrap();
+        let expected = (16000.0_f32 * 3.0) as usize;
+        assert!(
+            (out.len() as i64 - expected as i64).unsigned_abs() < (expected / 100) as u64,
+            "got {} expected ~{}",
+            out.len(),
+            expected
+        );
+    }
+}

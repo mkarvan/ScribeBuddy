@@ -171,6 +171,10 @@ pub async fn start_session(
     let (segment_tx, segment_rx) = crossbeam_channel::bounded(512);
     let (error_tx, error_rx) = crossbeam_channel::bounded(16);
 
+    // Store sender clones so listener threads outlive pause/resume cycles.
+    *state.segment_tx.lock() = Some(segment_tx.clone());
+    *state.error_tx.lock() = Some(error_tx.clone());
+
     if config.use_screencapturekit {
         let mut you: Box<dyn AudioSource> = Box::new(CpalAudioSource::new("Microphone", 44100, 1));
         you.start().map_err(|e| format!("Failed to start mic: {}", e))?;
@@ -185,7 +189,7 @@ pub async fn start_session(
         let remote_consumer = remote.take_consumer().ok_or("No remote consumer")?;
         let remote_rate = remote.sample_rate();
 
-        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx);
+        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx.clone());
         let handle = std::thread::spawn(move || {
             processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
         });
@@ -204,7 +208,7 @@ pub async fn start_session(
         let remote_consumer = remote.take_consumer().ok_or("No remote consumer")?;
         let remote_rate = remote.sample_rate();
 
-        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx);
+        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx.clone());
         let handle = std::thread::spawn(move || {
             processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
         });
@@ -217,7 +221,8 @@ pub async fn start_session(
     *state.session_state.write() = SessionState::Recording;
     let _ = app.emit("session-state-changed", SessionState::Recording);
 
-    // Listener thread: drain segment channel, emit to frontend
+    // Listener thread: drain segment channel, emit to frontend.
+    // Runs until AppState drops its segment_tx clone (on stop).
     let acc = state.accumulated.clone();
     let app_clone = app.clone();
     std::thread::spawn(move || {
@@ -227,7 +232,7 @@ pub async fn start_session(
         }
     });
 
-    // Error listener: forward processor errors to frontend
+    // Error listener: forward processor errors to frontend.
     let app_for_errors = app.clone();
     std::thread::spawn(move || {
         while let Ok(msg) = error_rx.recv() {
@@ -258,6 +263,11 @@ pub async fn pause_session(
         let _ = remote.stop();
     }
 
+    // Wait for the processor thread to exit before we declare paused.
+    if let Some(handle) = state.processor_handle.lock().take() {
+        let _ = handle.join();
+    }
+
     *state.session_state.write() = SessionState::Paused;
     let _ = app.emit("session-state-changed", SessionState::Paused);
     log::info!("Session paused");
@@ -276,12 +286,34 @@ pub async fn resume_session(
 
     state.running.store(true, Ordering::SeqCst);
 
-    if let Some(ref mut you) = *state.you_source.lock() {
-        you.start().map_err(|e| format!("Failed to resume mic: {}", e))?;
-    }
-    if let Some(ref mut remote) = *state.remote_source.lock() {
-        remote.start().map_err(|e| format!("Failed to resume system audio: {}", e))?;
-    }
+    // Each AudioSource::start() creates a fresh ring buffer; take the new consumer.
+    let (you_consumer, you_rate) = {
+        let mut lock = state.you_source.lock();
+        let src = lock.as_mut().ok_or("No mic source")?;
+        src.start().map_err(|e| format!("Failed to resume mic: {}", e))?;
+        let consumer = src.take_consumer().ok_or("No mic consumer after resume")?;
+        let rate = src.sample_rate();
+        (consumer, rate)
+    };
+    let (remote_consumer, remote_rate) = {
+        let mut lock = state.remote_source.lock();
+        let src = lock.as_mut().ok_or("No remote source")?;
+        src.start().map_err(|e| format!("Failed to resume remote: {}", e))?;
+        let consumer = src.take_consumer().ok_or("No remote consumer after resume")?;
+        let rate = src.sample_rate();
+        (consumer, rate)
+    };
+
+    // Spawn a new processor thread connected to the same channels as the listeners.
+    let config = state.config.lock().clone();
+    let running = state.running.clone();
+    let segment_tx = state.segment_tx.lock().clone().ok_or("Session channels not initialized")?;
+    let error_tx = state.error_tx.lock().clone().ok_or("Session channels not initialized")?;
+    let processor = AudioProcessor::new(config, running, segment_tx, error_tx);
+    let handle = std::thread::spawn(move || {
+        processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
+    });
+    *state.processor_handle.lock() = Some(handle);
 
     *state.session_state.write() = SessionState::Recording;
     let _ = app.emit("session-state-changed", SessionState::Recording);
@@ -311,6 +343,10 @@ pub async fn stop_session(
     if let Some(handle) = state.processor_handle.lock().take() {
         let _ = handle.join();
     }
+
+    // Drop stored senders → channels close → listener threads exit.
+    *state.segment_tx.lock() = None;
+    *state.error_tx.lock() = None;
 
     *state.session_state.write() = SessionState::Stopped;
     let _ = app.emit("session-state-changed", SessionState::Stopped);

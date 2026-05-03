@@ -1,3 +1,4 @@
+use crossbeam_channel::Sender;
 use parking_lot::Mutex;
 use scribebuddy_core::audio::capture::AudioSource;
 use scribebuddy_core::{SessionConfig, SessionState, TranscriptSegment};
@@ -15,6 +16,9 @@ pub struct AppState {
     pub remote_source: Mutex<Option<Box<dyn AudioSource>>>,
     pub processor_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
     pub model_downloading: Arc<parking_lot::RwLock<bool>>,
+    /// Held so the segment/error listener threads outlive pause/resume cycles.
+    pub segment_tx: Mutex<Option<Sender<TranscriptSegment>>>,
+    pub error_tx: Mutex<Option<Sender<String>>>,
 }
 
 impl AppState {
@@ -29,6 +33,8 @@ impl AppState {
             remote_source: Mutex::new(None),
             processor_handle: Mutex::new(None),
             model_downloading: Arc::new(parking_lot::RwLock::new(false)),
+            segment_tx: Mutex::new(None),
+            error_tx: Mutex::new(None),
         }
     }
 

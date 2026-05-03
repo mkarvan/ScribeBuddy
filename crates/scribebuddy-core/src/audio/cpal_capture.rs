@@ -39,19 +39,25 @@ impl CpalAudioSource {
             .and_then(|d| d.name().ok())
     }
 
-    fn spawn_capture_thread(&mut self, producer: AudioProducer) {
+    fn spawn_capture_thread(
+        &mut self,
+        producer: AudioProducer,
+        rate: u32,
+        channels: u16,
+    ) -> Result<()> {
         let running = self.running.clone();
         let running_loop = self.running.clone();
-        let rate = self.sample_rate;
-        let channels = self.channels;
         let name = self.name.clone();
+
+        // Use a one-shot channel so start() blocks until the stream either opens or fails.
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
 
         self.capture_handle = Some(std::thread::spawn(move || {
             let host = cpal::default_host();
             let device = match host.default_input_device() {
                 Some(d) => d,
                 None => {
-                    log::error!("[cpal] No input device for '{}'", name);
+                    let _ = ready_tx.send(Err("No microphone device found".into()));
                     return;
                 }
             };
@@ -72,46 +78,55 @@ impl CpalAudioSource {
                     if !running_cb.load(Ordering::SeqCst) {
                         return;
                     }
-                    // Downmix to mono
+                    // Mix down to mono
                     let mono: Vec<f32> = if ch == 1 {
                         data.to_vec()
                     } else {
                         let frames = data.len() / ch;
                         (0..frames)
-                            .map(|f| {
-                                data[f * ch..(f + 1) * ch].iter().sum::<f32>() / ch as f32
-                            })
+                            .map(|f| data[f * ch..(f + 1) * ch].iter().sum::<f32>() / ch as f32)
                             .collect()
                     };
-                    let buf = AudioBuffer {
+                    let _ = prod.try_push(AudioBuffer {
                         data: mono,
                         timestamp: std::time::Instant::now(),
-                    };
-                    let _ = prod.try_push(buf);
+                    });
                 },
                 |err| log::error!("[cpal] stream error: {}", err),
                 None,
             ) {
                 Ok(s) => s,
                 Err(e) => {
-                    log::error!("[cpal] build_input_stream failed ({}Hz, {}ch): {}", rate, channels, e);
+                    let msg = format!(
+                        "Microphone access failed: {}. \
+                         Grant microphone permission in System Settings → Privacy & Security → Microphone.",
+                        e
+                    );
+                    let _ = ready_tx.send(Err(msg));
                     return;
                 }
             };
 
             if let Err(e) = stream.play() {
-                log::error!("[cpal] stream.play() failed: {}", e);
+                let _ = ready_tx.send(Err(format!("Failed to start mic stream: {}", e)));
                 return;
             }
 
-            log::info!("[cpal] capture running: '{}'  {}Hz  {}ch", name, rate, channels);
+            log::info!("[cpal] '{}' running at {}Hz {}ch", name, rate, channels);
+            let _ = ready_tx.send(Ok(()));
 
             while running_loop.load(Ordering::SeqCst) {
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
-
             drop(stream);
         }));
+
+        // Wait up to 3 s for the stream to open (permission prompt can add a brief delay)
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(msg)) => Err(anyhow::anyhow!("{}", msg)),
+            Err(_) => Err(anyhow::anyhow!("Microphone startup timed out")),
+        }
     }
 }
 
@@ -144,9 +159,8 @@ impl AudioSource for CpalAudioSource {
         let ring = AudioRingBuffer::new(64);
         let (prod, cons) = ring.split();
         self.consumer = Some(cons);
-        self.spawn_capture_thread(prod);
 
-        Ok(())
+        self.spawn_capture_thread(prod, self.sample_rate, self.channels)
     }
 
     fn stop(&mut self) -> Result<()> {

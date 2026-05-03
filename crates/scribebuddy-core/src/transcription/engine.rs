@@ -37,6 +37,17 @@ impl WhisperEngine {
         let mut params =
             whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
 
+        // Disable timestamp tokens — we track timing ourselves via chunk offsets.
+        // This prevents the "single timestamp ending - skip entire chunk" Whisper skip.
+        params.set_no_timestamps(true);
+        params.set_single_segment(true);
+
+        // Suppress C-library console noise
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+
         // Configure language: "auto"/empty → auto-detect; specific code → force language
         // Box::leak gives a &'static str so it satisfies FullParams<'static, 'static>.
         // One small string per engine creation is an acceptable trade-off.

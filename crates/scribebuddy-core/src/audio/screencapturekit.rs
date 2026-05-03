@@ -129,57 +129,58 @@ impl ScreenCaptureKitSource {
         }
     }
 
-    /// Returns user-facing applications visible to SCK.
-    /// Filters to apps that own at least one window AND pass a name/bundle-ID
-    /// heuristic to exclude system processes (Dock, Wallpaper, Control Center, etc.).
-    /// Falls back to a static list when Screen Recording permission hasn't been granted yet.
+    /// Returns the subset of known meeting apps and browsers that are currently running.
+    /// Uses a fixed curated list so only relevant apps appear — no system processes.
+    /// If SCK isn't available, returns the full curated list so the user can still pick.
     pub fn enumerate_running_apps() -> Vec<crate::RunningApp> {
+        let known = Self::known_apps();
+
         match SCShareableContent::get() {
             Ok(content) => {
-                let windows = content.windows();
-                let mut seen_ids = std::collections::HashSet::new();
-                let mut result: Vec<crate::RunningApp> = windows
+                let running: std::collections::HashSet<String> = content
+                    .applications()
                     .into_iter()
-                    .map(|w| w.owning_application())
-                    .filter(|a| {
-                        let bid = a.bundle_identifier();
-                        let name = a.application_name();
-                        !bid.is_empty()
-                            && !name.is_empty()
-                            && seen_ids.insert(bid.clone())
-                            && is_user_facing_app(&bid, &name)
-                    })
-                    .map(|a| crate::RunningApp {
-                        bundle_id: a.bundle_identifier(),
-                        name: a.application_name(),
-                    })
+                    .map(|a| a.bundle_identifier())
                     .collect();
 
-                if result.is_empty() {
-                    return Self::static_fallback();
-                }
-                result.sort_by(|a, b| a.name.cmp(&b.name));
-                result
+                let filtered: Vec<crate::RunningApp> = known
+                    .into_iter()
+                    .filter(|app| running.contains(&app.bundle_id))
+                    .collect();
+
+                // If none of the known apps are running yet, return the full list
+                // so the user can pre-select before launching the meeting.
+                if filtered.is_empty() { Self::known_apps() } else { filtered }
             }
             Err(e) => {
-                log::warn!("SCK enumerate_running_apps failed (permission?): {:?}", e);
-                Self::static_fallback()
+                log::warn!("SCK enumerate failed (permission?): {:?}", e);
+                known
             }
         }
     }
 
-    fn static_fallback() -> Vec<crate::RunningApp> {
+    fn known_apps() -> Vec<crate::RunningApp> {
         vec![
-            ("us.zoom.xos", "Zoom"),
-            ("com.microsoft.teams2", "Microsoft Teams"),
-            ("com.google.Chrome", "Google Chrome"),
-            ("org.mozilla.firefox", "Firefox"),
-            ("com.apple.Safari", "Safari"),
-            ("com.tinyspeck.slackmacgap", "Slack"),
-            ("com.hnc.Discord", "Discord"),
-            ("com.brave.Browser", "Brave Browser"),
-            ("com.microsoft.edgemac", "Microsoft Edge"),
-            ("company.thebrowser.Browser", "Arc Browser"),
+            // Video conferencing
+            ("us.zoom.xos",                   "Zoom"),
+            ("com.microsoft.teams2",          "Microsoft Teams"),
+            ("com.microsoft.teams",           "Microsoft Teams (Work or School)"),
+            ("com.cisco.webexmeetingsapp",    "Webex Meetings"),
+            ("com.google.meet",               "Google Meet"),
+            ("com.loom.desktop",              "Loom"),
+            // Messaging / voice
+            ("com.tinyspeck.slackmacgap",     "Slack"),
+            ("com.hnc.Discord",               "Discord"),
+            ("com.facebook.archon",           "Messenger"),
+            ("com.apple.facetime",            "FaceTime"),
+            // Browsers
+            ("com.google.Chrome",             "Google Chrome"),
+            ("org.mozilla.firefox",           "Firefox"),
+            ("com.apple.Safari",              "Safari"),
+            ("com.brave.Browser",             "Brave"),
+            ("com.microsoft.edgemac",         "Microsoft Edge"),
+            ("company.thebrowser.Browser",    "Arc"),
+            ("com.operasoftware.Opera",       "Opera"),
         ]
         .into_iter()
         .map(|(b, n)| crate::RunningApp {
@@ -275,55 +276,3 @@ impl AudioSource for ScreenCaptureKitSource {
     }
 }
 
-/// Returns true for apps a user would plausibly want to capture audio from.
-/// Filters out macOS system processes, services, and the app itself.
-fn is_user_facing_app(bundle_id: &str, name: &str) -> bool {
-    // Skip the app itself
-    if bundle_id.starts_with("ai.scribebuddy") {
-        return false;
-    }
-
-    // Skip known system-process bundle IDs
-    const BLOCKED_BUNDLES: &[&str] = &[
-        "com.apple.dock",
-        "com.apple.wallpaper",
-        "com.apple.controlcenter",
-        "com.apple.loginwindow",
-        "com.apple.TextInputSwitcher",
-        "com.apple.notificationcenterui",
-        "com.apple.Spotlight",
-        "com.apple.universalcontrol",
-        "com.apple.UserNotificationCenter",
-        "com.apple.accessibility.AccessibilityUIServer",
-        "com.apple.WindowServer",
-    ];
-    if BLOCKED_BUNDLES.contains(&bundle_id) {
-        return false;
-    }
-
-    // Skip processes whose names indicate they are services or helpers
-    let lname = name.to_lowercase();
-    if lname.contains("service") || lname.contains("agent") || lname.contains("daemon") {
-        return false;
-    }
-
-    // Skip by exact name for remaining system UI processes
-    const BLOCKED_NAMES: &[&str] = &[
-        "Dock",
-        "Control Center",
-        "Notification Center",
-        "Universal Control",
-        "Spotlight",
-        "Accessibility",
-        "loginwindow",
-        "TextInputSwitcher",
-        "Wallpaper",
-        "WindowServer",
-        "UserNotificationCenter",
-    ];
-    if BLOCKED_NAMES.iter().any(|&b| b.eq_ignore_ascii_case(name)) {
-        return false;
-    }
-
-    true
-}

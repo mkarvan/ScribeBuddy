@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ScribeBuddy</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>ScribeBuddy</h1>
+            <span id="status-badge">Idle</span>
+        </header>
+
+        <div id="settings-panel">
+            <div class="setting-row">
+                <label for="app-select">Meeting App:</label>
+                <select id="app-select">
+                    <option value="">-- Select App --</option>
+                </select>
+                <button id="refresh-apps-btn" title="Refresh app list">&#x21bb;</button>
+            </div>
+
+            <div class="setting-row">
+                <label for="model-select">Model:</label>
+                <select id="model-select">
+                    <option value="tiny">Tiny (~77MB)</option>
+                    <option value="base">Base (~142MB)</option>
+                    <option value="small" selected>Small (~461MB)</option>
+                    <option value="medium">Medium (~1.5GB)</option>
+                </select>
+                <button id="download-model-btn" class="sm-btn" title="Download model">&#x21e9;</button>
+            </div>
+
+            <div class="setting-row">
+                <label for="chunk-slider">Chunk: <span id="chunk-value">3.0s</span></label>
+                <input type="range" id="chunk-slider" min="1" max="5" step="0.5" value="3" />
+            </div>
+
+            <div class="setting-row">
+                <label for="capture-mode">Capture:</label>
+                <select id="capture-mode">
+                    <option value="sck" selected>ScreenCaptureKit</option>
+                    <option value="blackhole">BlackHole/cpal</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="download-bar" class="hidden">
+            <div class="download-info">
+                <span id="download-label">Downloading model...</span>
+                <span id="download-progress">0%</span>
+            </div>
+            <div class="progress-track">
+                <div id="progress-fill" class="progress-fill"></div>
+            </div>
+        </div>
+
+        <div id="error-bar" class="hidden">
+            <span id="error-text"></span>
+            <button id="error-dismiss" class="sm-btn">x</button>
+        </div>
+
+        <div id="controls-bar">
+            <button id="start-btn" class="ctrl-btn primary">Start</button>
+            <button id="pause-btn" class="ctrl-btn" disabled>Pause</button>
+            <button id="resume-btn" class="ctrl-btn" disabled>Resume</button>
+            <button id="stop-btn" class="ctrl-btn danger" disabled>Stop</button>
+            <button id="export-btn" class="ctrl-btn" disabled>Export .md</button>
+        </div>
+
+        <div id="transcript-container">
+            <div id="transcript">
+                <p class="placeholder">Start a session to see live transcription here...</p>
+            </div>
+        </div>
+
+        <footer>
+            <span id="timer">00:00:00</span>
+            <span id="segment-count">0 segments</span>
+        </footer>
+    </div>
+
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>

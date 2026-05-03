@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/scribebuddy-core",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["ScribeBuddy"]
+license = "MIT"
+
+[workspace.dependencies]
+scribebuddy-core = { path = "crates/scribebuddy-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+crossbeam-channel = "0.5"
+ringbuf = "0.4"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+parking_lot = "0.12"
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1

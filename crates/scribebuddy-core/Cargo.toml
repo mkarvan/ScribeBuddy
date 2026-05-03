@@ -1,0 +1,33 @@
+[package]
+name = "scribebuddy-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[features]
+default = ["screencapturekit"]
+screencapturekit = []
+cpal-backend = ["cpal"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+crossbeam-channel.workspace = true
+ringbuf.workspace = true
+log.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+parking_lot.workspace = true
+
+# Whisper
+whisper-rs = { version = "0.16", features = ["metal"] }
+# Audio
+cpal = { version = "0.15", optional = true }
+rubato = "0.14"
+# HTTP for model downloads
+ureq = "2"
+# macOS
+screencapturekit = "0.3"

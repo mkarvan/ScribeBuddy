@@ -1,0 +1,334 @@
+use crate::state::AppState;
+use scribebuddy_core::audio::capture::AudioSource;
+use scribebuddy_core::audio::cpal_capture::CpalAudioSource;
+use scribebuddy_core::audio::processor::AudioProcessor;
+use scribebuddy_core::audio::screencapturekit::ScreenCaptureKitSource;
+use scribebuddy_core::transcription::model::ModelManager;
+use scribebuddy_core::{
+    export::markdown::MarkdownExporter, ModelSize, RunningApp, SessionConfig, SessionState,
+    TranscriptSegment,
+};
+use crossbeam_channel;
+use std::sync::atomic::Ordering;
+use tauri::{AppHandle, Emitter, State};
+
+#[tauri::command]
+pub fn list_running_apps() -> Vec<RunningApp> {
+    ScreenCaptureKitSource::enumerate_running_apps()
+}
+
+#[tauri::command]
+pub fn list_audio_devices() -> Vec<String> {
+    CpalAudioSource::enumerate_input_devices()
+}
+
+#[tauri::command]
+pub fn get_session_state(state: State<'_, AppState>) -> SessionState {
+    state.session_state.read().clone()
+}
+
+#[tauri::command]
+pub fn set_target_app(
+    state: State<'_, AppState>,
+    bundle_id: String,
+) -> Result<(), String> {
+    let mut config = state.config.lock();
+    config.target_app_bundle_id = Some(bundle_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_model_size(
+    state: State<'_, AppState>,
+    size: String,
+) -> Result<(), String> {
+    let model_size = match size.as_str() {
+        "tiny" => ModelSize::Tiny,
+        "base" => ModelSize::Base,
+        "small" => ModelSize::Small,
+        "medium" => ModelSize::Medium,
+        _ => return Err(format!("Unknown model size: {}", size)),
+    };
+
+    let mut config = state.config.lock();
+    config.model_size = model_size;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_chunk_duration(
+    state: State<'_, AppState>,
+    seconds: f32,
+) -> Result<(), String> {
+    let mut config = state.config.lock();
+    config.chunk_duration_secs = seconds.clamp(1.0, 5.0);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_capture_mode(
+    state: State<'_, AppState>,
+    use_screencapturekit: bool,
+) -> Result<(), String> {
+    let mut config = state.config.lock();
+    config.use_screencapturekit = use_screencapturekit;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_config(state: State<'_, AppState>) -> Result<SessionConfig, String> {
+    let config = state.config.lock();
+    Ok(config.clone())
+}
+
+#[tauri::command]
+pub fn check_model_available(
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let config = state.config.lock();
+    let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
+    Ok(model_mgr.is_model_available(&config.model_size))
+}
+
+#[tauri::command]
+pub async fn download_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let config = state.config.lock().clone();
+    let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
+
+    if model_mgr.is_model_available(&config.model_size) {
+        let _ = app.emit("model-download-progress", serde_json::json!({
+            "downloaded": 100u64,
+            "total": 100u64,
+            "done": true,
+        }));
+        return Ok(());
+    }
+
+    *state.model_downloading.write() = true;
+    let _ = app.emit("model-download-started", config.model_size);
+
+    let app_clone = app.clone();
+    let result = model_mgr.download_model(
+        &config.model_size,
+        move |downloaded, total| {
+            let _ = app_clone.emit("model-download-progress", serde_json::json!({
+                "downloaded": downloaded,
+                "total": total,
+                "done": false,
+            }));
+        },
+    );
+
+    *state.model_downloading.write() = false;
+
+    match result {
+        Ok(()) => {
+            let _ = app.emit("model-download-progress", serde_json::json!({
+                "downloaded": 100u64,
+                "total": 100u64,
+                "done": true,
+            }));
+            Ok(())
+        }
+        Err(e) => {
+            let _ = app.emit("model-download-error", e.to_string());
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn start_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let current = state.session_state.read().clone();
+    if current != SessionState::Idle && current != SessionState::Stopped {
+        return Err(format!("Cannot start: session is {}", current));
+    }
+
+    let config = state.config.lock().clone();
+    let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
+    if !model_mgr.is_model_available(&config.model_size) {
+        return Err("Whisper model not found. Download it first.".to_string());
+    }
+
+    state.clear_segments();
+
+    let running = state.running.clone();
+    running.store(true, Ordering::SeqCst);
+
+    let (segment_tx, segment_rx) = crossbeam_channel::bounded(512);
+    let (error_tx, error_rx) = crossbeam_channel::bounded(16);
+
+    if config.use_screencapturekit {
+        let mut you: Box<dyn AudioSource> = Box::new(CpalAudioSource::new("Microphone", 44100, 1));
+        you.start().map_err(|e| format!("Failed to start mic: {}", e))?;
+        let you_consumer = you.take_consumer().ok_or("No mic consumer")?;
+        let you_rate = you.sample_rate();
+
+        let mut remote: Box<dyn AudioSource> = Box::new(ScreenCaptureKitSource::new(
+            "System Audio",
+            config.target_app_bundle_id.clone(),
+        ));
+        remote.start().map_err(|e| format!("Failed to start system audio: {}", e))?;
+        let remote_consumer = remote.take_consumer().ok_or("No remote consumer")?;
+        let remote_rate = remote.sample_rate();
+
+        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx);
+        let handle = std::thread::spawn(move || {
+            processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
+        });
+
+        *state.you_source.lock() = Some(you);
+        *state.remote_source.lock() = Some(remote);
+        *state.processor_handle.lock() = Some(handle);
+    } else {
+        let mut you: Box<dyn AudioSource> = Box::new(CpalAudioSource::new("Microphone", 44100, 1));
+        you.start().map_err(|e| format!("Failed to start mic: {}", e))?;
+        let you_consumer = you.take_consumer().ok_or("No mic consumer")?;
+        let you_rate = you.sample_rate();
+
+        let mut remote: Box<dyn AudioSource> = Box::new(CpalAudioSource::new("BlackHole", 44100, 2));
+        remote.start().map_err(|e| format!("Failed to start BlackHole: {}", e))?;
+        let remote_consumer = remote.take_consumer().ok_or("No remote consumer")?;
+        let remote_rate = remote.sample_rate();
+
+        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx);
+        let handle = std::thread::spawn(move || {
+            processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
+        });
+
+        *state.you_source.lock() = Some(you);
+        *state.remote_source.lock() = Some(remote);
+        *state.processor_handle.lock() = Some(handle);
+    }
+
+    *state.session_state.write() = SessionState::Recording;
+    let _ = app.emit("session-state-changed", SessionState::Recording);
+
+    // Listener thread: drain segment channel, emit to frontend
+    let acc = state.accumulated.clone();
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        while let Ok(segment) = segment_rx.recv() {
+            let _ = app_clone.emit("transcript-segment", segment.clone());
+            acc.write().push(segment);
+        }
+    });
+
+    // Error listener: forward processor errors to frontend
+    let app_for_errors = app.clone();
+    std::thread::spawn(move || {
+        while let Ok(msg) = error_rx.recv() {
+            let _ = app_for_errors.emit("session-error", msg);
+        }
+    });
+
+    log::info!("Session started");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pause_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let current = state.session_state.read().clone();
+    if current != SessionState::Recording {
+        return Err(format!("Cannot pause: session is {}", current));
+    }
+
+    state.running.store(false, Ordering::SeqCst);
+
+    if let Some(ref mut you) = *state.you_source.lock() {
+        let _ = you.stop();
+    }
+    if let Some(ref mut remote) = *state.remote_source.lock() {
+        let _ = remote.stop();
+    }
+
+    *state.session_state.write() = SessionState::Paused;
+    let _ = app.emit("session-state-changed", SessionState::Paused);
+    log::info!("Session paused");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let current = state.session_state.read().clone();
+    if current != SessionState::Paused {
+        return Err(format!("Cannot resume: session is {}", current));
+    }
+
+    state.running.store(true, Ordering::SeqCst);
+
+    if let Some(ref mut you) = *state.you_source.lock() {
+        you.start().map_err(|e| format!("Failed to resume mic: {}", e))?;
+    }
+    if let Some(ref mut remote) = *state.remote_source.lock() {
+        remote.start().map_err(|e| format!("Failed to resume system audio: {}", e))?;
+    }
+
+    *state.session_state.write() = SessionState::Recording;
+    let _ = app.emit("session-state-changed", SessionState::Recording);
+    log::info!("Session resumed");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let current = state.session_state.read().clone();
+    if current != SessionState::Recording && current != SessionState::Paused {
+        return Err(format!("Cannot stop: session is {}", current));
+    }
+
+    state.running.store(false, Ordering::SeqCst);
+
+    if let Some(ref mut you) = *state.you_source.lock() {
+        let _ = you.stop();
+    }
+    if let Some(ref mut remote) = *state.remote_source.lock() {
+        let _ = remote.stop();
+    }
+
+    if let Some(handle) = state.processor_handle.lock().take() {
+        let _ = handle.join();
+    }
+
+    *state.session_state.write() = SessionState::Stopped;
+    let _ = app.emit("session-state-changed", SessionState::Stopped);
+    log::info!("Session stopped");
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_transcript(state: State<'_, AppState>) -> Vec<TranscriptSegment> {
+    state.get_segments()
+}
+
+#[tauri::command]
+pub fn export_markdown(state: State<'_, AppState>) -> Result<String, String> {
+    let segments = state.get_segments();
+    if segments.is_empty() {
+        return Err("No transcript to export".to_string());
+    }
+    Ok(MarkdownExporter::export(&segments))
+}
+
+#[tauri::command]
+pub fn add_transcript_segment(
+    state: State<'_, AppState>,
+    segment: TranscriptSegment,
+) {
+    state.push_segment(segment);
+}

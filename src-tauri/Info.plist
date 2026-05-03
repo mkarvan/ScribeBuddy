@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ScribeBuddy needs microphone access to transcribe your voice during meetings.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>ScribeBuddy uses Screen Recording to capture meeting audio. No screen content is recorded or stored.</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

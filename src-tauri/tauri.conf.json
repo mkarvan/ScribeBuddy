@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-v2-docs/refs/heads/master/examples/tauri-conf-schema.json",
+  "productName": "ScribeBuddy",
+  "version": "0.1.0",
+  "identifier": "ai.scribebuddy.app",
+  "build": {
+    "frontendDist": "../frontend",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ScribeBuddy — Meeting Transcription",
+        "width": 900,
+        "height": 650,
+        "minWidth": 600,
+        "minHeight": 400,
+        "center": true
+      }
+    ],
+    "withGlobalTauri": true,
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    },
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ],
+    "targets": "dmg",
+    "createUpdaterArtifacts": false,
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "./Entitlements.plist",
+      "info-plist": "./Info.plist"
+    }
+  }
+}

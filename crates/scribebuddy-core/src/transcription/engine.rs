@@ -37,11 +37,6 @@ impl WhisperEngine {
         let mut params =
             whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
 
-        // Disable timestamp tokens — we track timing ourselves via chunk offsets.
-        // This prevents the "single timestamp ending - skip entire chunk" Whisper skip.
-        params.set_no_timestamps(true);
-        params.set_single_segment(true);
-
         // Suppress C-library console noise
         params.set_print_special(false);
         params.set_print_progress(false);
@@ -93,9 +88,13 @@ impl WhisperEngine {
             return Ok(());
         }
 
+        let rms_in = rms(samples);
         if is_silence(samples, self.silence_threshold) {
+            log::info!("[whisper] {:?} chunk silent (rms={:.4}), skipping", speaker, rms_in);
             return Ok(());
         }
+
+        log::info!("[whisper] {:?} running inference: {} samples, rms={:.4}", speaker, samples.len(), rms_in);
 
         let chunk: Vec<f32> = if samples.len() > self.chunk_duration_samples {
             samples[..self.chunk_duration_samples].to_vec()
@@ -113,7 +112,6 @@ impl WhisperEngine {
             .full(self.full_params.clone(), &chunk)
             .context("Whisper inference failed")?;
 
-        let rms_in = rms(samples);
         log::debug!(
             "[whisper] {:?} input: {} samples @ 16kHz, rms={:.4}",
             speaker, samples.len(), rms_in

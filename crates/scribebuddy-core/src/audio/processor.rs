@@ -113,8 +113,8 @@ impl AudioProcessor {
             if you_buffer.len() >= you_chunk_target {
                 let chunk: Vec<f32> = you_buffer.drain(..you_chunk_target).collect();
                 let rms_you = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
-                log::debug!(
-                    "[proc] you chunk: {} samples @{}Hz, rms={:.4}",
+                log::info!(
+                    "[proc] you chunk ready: {} samples @{}Hz, rms={:.4}",
                     chunk.len(), you_source_rate, rms_you
                 );
                 if !is_silence(&chunk, silence_threshold) {
@@ -147,8 +147,8 @@ impl AudioProcessor {
             if remote_buffer.len() >= remote_chunk_target {
                 let chunk: Vec<f32> = remote_buffer.drain(..remote_chunk_target).collect();
                 let rms_raw = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
-                log::debug!(
-                    "[proc] remote chunk: {} samples @{}Hz, rms={:.4}",
+                log::info!(
+                    "[proc] remote chunk ready: {} samples @{}Hz, rms={:.4}",
                     chunk.len(), remote_source_rate, rms_raw
                 );
                 if !is_silence(&chunk, silence_threshold) {

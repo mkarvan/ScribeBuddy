@@ -148,9 +148,13 @@ fn rms(samples: &[f32]) -> f32 {
     (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
 }
 
-/// Returns true for Whisper annotation tokens like [MUSIC], [SOUND], (growling).
-/// These indicate non-speech audio and should not appear in the transcript.
+/// Returns true for Whisper non-speech annotation tokens.
+/// Covers [MUSIC], [BLANK_AUDIO], (growling), *burps*, ♪text♪ etc.
 fn is_annotation_token(text: &str) -> bool {
     let t = text.trim();
-    (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('(') && t.ends_with(')'))
+    (t.starts_with('[') && t.ends_with(']'))
+        || (t.starts_with('(') && t.ends_with(')'))
+        || (t.starts_with('*') && t.ends_with('*') && t.len() > 1)
+        || (t.starts_with('♪') && t.ends_with('♪'))
+        || (t.starts_with('♫') && t.ends_with('♫'))
 }

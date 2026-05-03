@@ -5,6 +5,7 @@ use crate::{SessionConfig, Speaker, TranscriptSegment};
 use chrono::Duration;
 use crossbeam_channel::Sender;
 use ringbuf::traits::Consumer;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -84,6 +85,15 @@ impl AudioProcessor {
             remote_chunk_target
         );
 
+        // Debug WAV dump: capture the first 30 s of resampled remote audio (what Whisper sees)
+        // to ~/Desktop/scribebuddy_whisper_input.wav. Disabled in release builds.
+        #[cfg(debug_assertions)]
+        let mut wav_buf: Vec<f32> = Vec::new();
+        #[cfg(debug_assertions)]
+        let wav_max_samples = (30.0 * WHISPER_RATE as f32) as usize;
+        #[cfg(debug_assertions)]
+        let mut wav_written = false;
+
         let chunk_dur = Duration::milliseconds((self.config.chunk_duration_secs * 1000.0) as i64);
         let mut you_offset = Duration::zero();
         let mut remote_offset = Duration::zero();
@@ -137,6 +147,17 @@ impl AudioProcessor {
                                 "[proc] remote resampled: {} samples @16kHz, rms={:.4}",
                                 resampled.len(), rms_out
                             );
+
+                            // Accumulate into WAV debug dump (debug builds only)
+                            #[cfg(debug_assertions)]
+                            if !wav_written && wav_buf.len() < wav_max_samples {
+                                wav_buf.extend_from_slice(&resampled);
+                                if wav_buf.len() >= wav_max_samples {
+                                    write_debug_wav(&wav_buf, WHISPER_RATE);
+                                    wav_written = true;
+                                }
+                            }
+
                             if let Err(e) = engine.process_chunk(
                                 &resampled,
                                 Speaker::Remote,
@@ -162,5 +183,46 @@ impl AudioProcessor {
         }
 
         log::info!("Audio processor stopped");
+    }
+}
+
+/// Writes a 32-bit float mono WAV to ~/Desktop/scribebuddy_whisper_input.wav.
+/// Only compiled in debug builds — used for audio-pipeline diagnosis.
+#[cfg(debug_assertions)]
+fn write_debug_wav(samples: &[f32], sample_rate: u32) {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let path = format!("{}/Desktop/scribebuddy_whisper_input.wav", home);
+
+    let do_write = || -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&path)?;
+        let data_bytes = (samples.len() * 4) as u32;
+
+        // RIFF header
+        f.write_all(b"RIFF")?;
+        f.write_all(&(36 + data_bytes).to_le_bytes())?;
+        f.write_all(b"WAVE")?;
+
+        // fmt chunk — IEEE float (format tag 3)
+        f.write_all(b"fmt ")?;
+        f.write_all(&16u32.to_le_bytes())?;
+        f.write_all(&3u16.to_le_bytes())?;           // IEEE float
+        f.write_all(&1u16.to_le_bytes())?;           // mono
+        f.write_all(&sample_rate.to_le_bytes())?;
+        f.write_all(&(sample_rate * 4).to_le_bytes())?;  // byte rate
+        f.write_all(&4u16.to_le_bytes())?;           // block align
+        f.write_all(&32u16.to_le_bytes())?;          // bits per sample
+
+        // data chunk
+        f.write_all(b"data")?;
+        f.write_all(&data_bytes.to_le_bytes())?;
+        for &s in samples {
+            f.write_all(&s.to_le_bytes())?;
+        }
+        Ok(())
+    };
+
+    match do_write() {
+        Ok(()) => log::info!("WAV debug dump written to {}", path),
+        Err(e) => log::error!("WAV debug dump failed: {}", e),
     }
 }

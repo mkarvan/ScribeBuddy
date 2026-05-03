@@ -45,12 +45,17 @@ impl SCStreamOutputTrait for AudioCaptureOutput {
         };
 
         // Handle both interleaved (1 buf, N ch) and non-interleaved (N bufs, 1 ch each)
+        let buffers = retained.buffers();
+        log::debug!("[sck] sample_buffer: {} AudioBuffer(s)", buffers.len());
+
         let mut channel_data: Vec<Vec<f32>> = Vec::new();
-        for audio_buf in retained.buffers() {
+        for (buf_idx, audio_buf) in buffers.iter().enumerate() {
             let bytes = audio_buf.data();
             let n_samples = bytes.len() / std::mem::size_of::<f32>();
             let n_ch = audio_buf.number_channels as usize;
+
             if n_ch == 0 || n_samples == 0 {
+                log::debug!("[sck]   buf[{}]: skipped (n_ch={}, n_samples={})", buf_idx, n_ch, n_samples);
                 continue;
             }
 
@@ -58,6 +63,16 @@ impl SCStreamOutputTrait for AudioCaptureOutput {
             let samples: &[f32] = unsafe {
                 std::slice::from_raw_parts(bytes.as_ptr() as *const f32, n_samples)
             };
+
+            let buf_rms = {
+                let sq: f32 = samples.iter().map(|s| s * s).sum();
+                (sq / n_samples as f32).sqrt()
+            };
+            let preview: Vec<f32> = samples.iter().take(4).cloned().collect();
+            log::debug!(
+                "[sck]   buf[{}]: n_ch={}, n_bytes={}, n_samples={}, rms={:.4}, first4={:?}",
+                buf_idx, n_ch, bytes.len(), n_samples, buf_rms, preview
+            );
 
             let frames = n_samples / n_ch;
             for c in 0..n_ch {
@@ -75,6 +90,12 @@ impl SCStreamOutputTrait for AudioCaptureOutput {
         let mono: Vec<f32> = (0..frames)
             .map(|f| channel_data.iter().map(|ch| ch[f]).sum::<f32>() / n_ch)
             .collect();
+
+        let mono_rms = {
+            let sq: f32 = mono.iter().map(|s| s * s).sum();
+            (sq / mono.len() as f32).sqrt()
+        };
+        log::debug!("[sck]   mono: {} frames, rms={:.4}", mono.len(), mono_rms);
 
         let buf = AudioBuf {
             data: mono,

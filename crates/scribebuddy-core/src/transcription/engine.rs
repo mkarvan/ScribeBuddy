@@ -102,6 +102,12 @@ impl WhisperEngine {
             .full(self.full_params.clone(), &chunk)
             .context("Whisper inference failed")?;
 
+        let rms_in = rms(samples);
+        log::debug!(
+            "[whisper] {:?} input: {} samples @ 16kHz, rms={:.4}",
+            speaker, samples.len(), rms_in
+        );
+
         let num_segments = state.full_n_segments();
         let mut text_parts: Vec<String> = Vec::new();
 
@@ -109,7 +115,9 @@ impl WhisperEngine {
             if let Some(segment) = state.get_segment(i) {
                 let text = segment.to_str_lossy().unwrap_or_default();
                 let trimmed = text.trim().to_string();
-                if !trimmed.is_empty() {
+                log::debug!("[whisper] raw segment {}: {:?}", i, trimmed);
+                // Drop Whisper non-speech annotation tokens: [MUSIC], (growling), etc.
+                if !trimmed.is_empty() && !is_annotation_token(&trimmed) {
                     text_parts.push(trimmed);
                 }
             }
@@ -134,3 +142,15 @@ impl WhisperEngine {
 
 unsafe impl Send for WhisperEngine {}
 unsafe impl Sync for WhisperEngine {}
+
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() { return 0.0; }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
+/// Returns true for Whisper annotation tokens like [MUSIC], [SOUND], (growling).
+/// These indicate non-speech audio and should not appear in the transcript.
+fn is_annotation_token(text: &str) -> bool {
+    let t = text.trim();
+    (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('(') && t.ends_with(')'))
+}

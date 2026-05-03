@@ -112,9 +112,19 @@ impl AudioProcessor {
 
             if you_buffer.len() >= you_chunk_target {
                 let chunk: Vec<f32> = you_buffer.drain(..you_chunk_target).collect();
+                let rms_you = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
+                log::debug!(
+                    "[proc] you chunk: {} samples @{}Hz, rms={:.4}",
+                    chunk.len(), you_source_rate, rms_you
+                );
                 if !is_silence(&chunk, silence_threshold) {
                     match you_resampler.resample(&chunk) {
                         Ok(resampled) => {
+                            let rms_out = (resampled.iter().map(|s| s * s).sum::<f32>() / resampled.len() as f32).sqrt();
+                            log::debug!(
+                                "[proc] you resampled: {} samples @16kHz, rms={:.4}",
+                                resampled.len(), rms_out
+                            );
                             if let Err(e) = engine.process_chunk(
                                 &resampled,
                                 Speaker::You,
@@ -127,6 +137,8 @@ impl AudioProcessor {
                         }
                         Err(e) => log::error!("Resample error (you): {}", e),
                     }
+                } else {
+                    log::debug!("[proc] you chunk silent (rms={:.4}), skipped", rms_you);
                 }
                 you_offset = you_offset + chunk_dur;
                 processed = true;

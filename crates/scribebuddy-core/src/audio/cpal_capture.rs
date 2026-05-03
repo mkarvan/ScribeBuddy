@@ -39,18 +39,19 @@ impl CpalAudioSource {
             .and_then(|d| d.name().ok())
     }
 
-    fn spawn_capture_thread(&mut self, mut producer: AudioProducer) {
+    fn spawn_capture_thread(&mut self, producer: AudioProducer) {
         let running = self.running.clone();
         let running_loop = self.running.clone();
         let rate = self.sample_rate;
         let channels = self.channels;
+        let name = self.name.clone();
 
         self.capture_handle = Some(std::thread::spawn(move || {
             let host = cpal::default_host();
             let device = match host.default_input_device() {
                 Some(d) => d,
                 None => {
-                    log::error!("No input device found for '{}'", "cpal source");
+                    log::error!("[cpal] No input device for '{}'", name);
                     return;
                 }
             };
@@ -61,6 +62,8 @@ impl CpalAudioSource {
                 buffer_size: cpal::BufferSize::Default,
             };
 
+            let ch = channels as usize;
+            let mut prod = producer;
             let running_cb = running.clone();
 
             let stream = match device.build_input_stream(
@@ -69,28 +72,39 @@ impl CpalAudioSource {
                     if !running_cb.load(Ordering::SeqCst) {
                         return;
                     }
+                    // Downmix to mono
+                    let mono: Vec<f32> = if ch == 1 {
+                        data.to_vec()
+                    } else {
+                        let frames = data.len() / ch;
+                        (0..frames)
+                            .map(|f| {
+                                data[f * ch..(f + 1) * ch].iter().sum::<f32>() / ch as f32
+                            })
+                            .collect()
+                    };
                     let buf = AudioBuffer {
-                        data: data.to_vec(),
+                        data: mono,
                         timestamp: std::time::Instant::now(),
                     };
-                    let _ = producer.try_push(buf);
+                    let _ = prod.try_push(buf);
                 },
-                |err| {
-                    log::error!("cpal audio error: {}", err);
-                },
+                |err| log::error!("[cpal] stream error: {}", err),
                 None,
             ) {
                 Ok(s) => s,
                 Err(e) => {
-                    log::error!("Failed to build input stream: {}", e);
+                    log::error!("[cpal] build_input_stream failed ({}Hz, {}ch): {}", rate, channels, e);
                     return;
                 }
             };
 
             if let Err(e) = stream.play() {
-                log::error!("Failed to start audio stream: {}", e);
+                log::error!("[cpal] stream.play() failed: {}", e);
                 return;
             }
+
+            log::info!("[cpal] capture running: '{}'  {}Hz  {}ch", name, rate, channels);
 
             while running_loop.load(Ordering::SeqCst) {
                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -105,13 +119,33 @@ impl AudioSource for CpalAudioSource {
     fn start(&mut self) -> Result<()> {
         self.running.store(true, Ordering::SeqCst);
 
-        // Create a fresh ring buffer for each start (supports restart after stop)
+        // Query the device's native config so we never request an unsupported rate/channel count.
+        let host = cpal::default_host();
+        let device = host
+            .default_input_device()
+            .ok_or_else(|| anyhow::anyhow!("No microphone found"))?;
+
+        let supported = device
+            .default_input_config()
+            .map_err(|e| anyhow::anyhow!("Mic config query failed: {}", e))?;
+
+        // Override stored values with what the hardware actually reports
+        self.sample_rate = supported.sample_rate().0;
+        self.channels = supported.channels();
+
+        log::info!(
+            "[cpal] mic '{}': device='{}', {}Hz, {}ch",
+            self.name,
+            device.name().unwrap_or_default(),
+            self.sample_rate,
+            self.channels
+        );
+
         let ring = AudioRingBuffer::new(64);
         let (prod, cons) = ring.split();
         self.consumer = Some(cons);
         self.spawn_capture_thread(prod);
 
-        log::info!("cpal audio capture started for '{}'", self.name);
         Ok(())
     }
 
@@ -122,7 +156,7 @@ impl AudioSource for CpalAudioSource {
             let _ = handle.join();
         }
 
-        log::info!("cpal audio capture stopped for '{}'", self.name);
+        log::info!("[cpal] capture stopped for '{}'", self.name);
         Ok(())
     }
 

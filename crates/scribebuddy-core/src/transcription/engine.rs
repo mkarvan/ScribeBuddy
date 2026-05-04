@@ -2,7 +2,6 @@ use crate::{SessionConfig, Speaker, TranscriptSegment};
 use super::model::ModelManager;
 use crate::audio::capture::{is_silence, TARGET_SAMPLE_RATE};
 use anyhow::{Context, Result};
-use crossbeam_channel::Sender;
 
 pub struct WhisperEngine {
     context: whisper_rs::WhisperContext,
@@ -71,16 +70,15 @@ impl WhisperEngine {
         samples: &[f32],
         speaker: Speaker,
         start_offset_secs: i64,
-        segment_tx: &Sender<TranscriptSegment>,
-    ) -> Result<()> {
+    ) -> Result<Vec<TranscriptSegment>> {
         if samples.len() < self.chunk_duration_samples / 2 {
-            return Ok(());
+            return Ok(vec![]);
         }
 
         let rms_in = rms(samples);
         if is_silence(samples, self.silence_threshold) {
             log::info!("[whisper] {:?} chunk silent (rms={:.4}), skipping", speaker, rms_in);
-            return Ok(());
+            return Ok(vec![]);
         }
 
         log::info!("[whisper] {:?} running inference: {} samples, rms={:.4}", speaker, samples.len(), rms_in);
@@ -121,19 +119,29 @@ impl WhisperEngine {
             }
         }
 
-        if !text_parts.is_empty() {
-            let text = text_parts.join(" ");
-            let chunk_secs = num_samples as i64 / TARGET_SAMPLE_RATE as i64;
-            let end_offset_secs = start_offset_secs + chunk_secs;
-            let segment = TranscriptSegment::new(speaker, text, start_offset_secs, end_offset_secs);
-            let _ = segment_tx.try_send(segment);
+        if text_parts.is_empty() {
+            return Ok(vec![]);
         }
 
-        Ok(())
+        let text = text_parts.join(" ");
+        let chunk_secs = num_samples as i64 / TARGET_SAMPLE_RATE as i64;
+        let end_offset_secs = start_offset_secs + chunk_secs;
+        Ok(vec![TranscriptSegment::new(speaker, text, start_offset_secs, end_offset_secs)])
     }
 
     pub fn chunk_duration_secs(&self) -> f32 {
         self.chunk_duration_samples as f32 / TARGET_SAMPLE_RATE as f32
+    }
+}
+
+impl super::Transcriber for WhisperEngine {
+    fn transcribe(
+        &mut self,
+        samples: &[f32],
+        speaker: Speaker,
+        offset_secs: i64,
+    ) -> anyhow::Result<Vec<TranscriptSegment>> {
+        self.process_chunk(samples, speaker, offset_secs)
     }
 }
 

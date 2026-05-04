@@ -1,6 +1,6 @@
 use crate::audio::capture::{is_silence, AudioConsumer};
 use crate::audio::resampler::AudioResampler;
-use crate::transcription::engine::WhisperEngine;
+use crate::transcription::{engine::WhisperEngine, Transcriber};
 use crate::{SessionConfig, Speaker, TranscriptSegment};
 use crossbeam_channel::Sender;
 use ringbuf::traits::Consumer;
@@ -34,10 +34,30 @@ impl AudioProcessor {
 
     pub fn run(
         self,
+        you_consumer: AudioConsumer,
+        remote_consumer: AudioConsumer,
+        you_source_rate: u32,
+        remote_source_rate: u32,
+    ) {
+        let engine = match WhisperEngine::new(&self.config) {
+            Ok(e) => e,
+            Err(err) => {
+                let msg = format!("Failed to load Whisper model: {}", err);
+                log::error!("{}", msg);
+                let _ = self.error_tx.try_send(msg);
+                return;
+            }
+        };
+        self.run_with(you_consumer, remote_consumer, you_source_rate, remote_source_rate, engine);
+    }
+
+    pub fn run_with<T: Transcriber>(
+        self,
         mut you_consumer: AudioConsumer,
         mut remote_consumer: AudioConsumer,
         you_source_rate: u32,
         remote_source_rate: u32,
+        mut transcriber: T,
     ) {
         let you_chunk_target =
             (self.config.chunk_duration_secs * you_source_rate as f32) as usize;
@@ -47,7 +67,6 @@ impl AudioProcessor {
         let mut you_buffer: Vec<f32> = Vec::with_capacity(you_chunk_target * 2);
         let mut remote_buffer: Vec<f32> = Vec::with_capacity(remote_chunk_target * 2);
 
-        // Create resamplers: source rate → 16kHz for Whisper
         let mut you_resampler = match AudioResampler::new(you_source_rate, WHISPER_RATE, you_chunk_target) {
             Ok(r) => r,
             Err(e) => {
@@ -62,16 +81,6 @@ impl AudioProcessor {
             Ok(r) => r,
             Err(e) => {
                 let msg = format!("Failed to create resampler (remote): {}", e);
-                log::error!("{}", msg);
-                let _ = self.error_tx.try_send(msg);
-                return;
-            }
-        };
-
-        let mut engine = match WhisperEngine::new(&self.config) {
-            Ok(e) => e,
-            Err(err) => {
-                let msg = format!("Failed to load Whisper model: {}", err);
                 log::error!("{}", msg);
                 let _ = self.error_tx.try_send(msg);
                 return;
@@ -124,14 +133,16 @@ impl AudioProcessor {
                                 "[proc] you resampled: {} samples @16kHz, rms={:.4}",
                                 resampled.len(), rms_out
                             );
-                            if let Err(e) = engine.process_chunk(
-                                &resampled,
-                                Speaker::You,
-                                you_offset_secs,
-                                &self.segment_tx,
-                            ) {
-                                log::error!("You Whisper error: {}", e);
-                                let _ = self.error_tx.try_send(format!("Whisper error (You): {}", e));
+                            match transcriber.transcribe(&resampled, Speaker::You, you_offset_secs) {
+                                Ok(segments) => {
+                                    for seg in segments {
+                                        let _ = self.segment_tx.try_send(seg);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("You transcriber error: {}", e);
+                                    let _ = self.error_tx.try_send(format!("Transcriber error (You): {}", e));
+                                }
                             }
                         }
                         Err(e) => log::error!("Resample error (you): {}", e),
@@ -169,14 +180,16 @@ impl AudioProcessor {
                                 }
                             }
 
-                            if let Err(e) = engine.process_chunk(
-                                &resampled,
-                                Speaker::Remote,
-                                remote_offset_secs,
-                                &self.segment_tx,
-                            ) {
-                                log::error!("Remote Whisper error: {}", e);
-                                let _ = self.error_tx.try_send(format!("Whisper error (Remote): {}", e));
+                            match transcriber.transcribe(&resampled, Speaker::Remote, remote_offset_secs) {
+                                Ok(segments) => {
+                                    for seg in segments {
+                                        let _ = self.segment_tx.try_send(seg);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Remote transcriber error: {}", e);
+                                    let _ = self.error_tx.try_send(format!("Transcriber error (Remote): {}", e));
+                                }
                             }
                         }
                         Err(e) => log::error!("Resample error (remote): {}", e),

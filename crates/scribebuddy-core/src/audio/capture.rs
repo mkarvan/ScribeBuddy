@@ -36,6 +36,16 @@ pub fn is_silence(samples: &[f32], threshold: f32) -> bool {
     rms_energy(samples) < threshold
 }
 
+pub fn make_audio_ring_buffer(capacity: usize) -> (AudioProducer, AudioConsumer) {
+    use ringbuf::traits::Split;
+    AudioRingBuffer::new(capacity).split()
+}
+
+pub fn push_audio_buffer(producer: &mut AudioProducer, buf: AudioBuffer) -> bool {
+    use ringbuf::traits::Producer;
+    producer.try_push(buf).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

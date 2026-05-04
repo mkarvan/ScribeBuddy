@@ -1,0 +1,5 @@
+# Required for release builds on macOS 15+ / Xcode 16+.
+# ggml-metal uses MTLResidencySet (@available macOS 15) which triggers
+# __isPlatformVersionAtLeast calls that need a matching deployment target.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "15.0"

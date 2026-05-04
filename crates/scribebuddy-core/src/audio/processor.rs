@@ -4,7 +4,6 @@ use crate::transcription::{engine::WhisperEngine, Transcriber};
 use crate::{SessionConfig, Speaker, TranscriptSegment};
 use crossbeam_channel::Sender;
 use ringbuf::traits::Consumer;
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -214,6 +213,7 @@ impl AudioProcessor {
 /// Only compiled in debug builds — used for audio-pipeline diagnosis.
 #[cfg(debug_assertions)]
 fn write_debug_wav(samples: &[f32], sample_rate: u32) {
+    use std::io::Write;
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let path = format!("{}/Desktop/scribebuddy_whisper_input.wav", home);
 

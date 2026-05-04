@@ -30,4 +30,8 @@ Icon
 .env
 .env.local
 
-# Tauri generated (icon PNGs are committed; source is src-tauri/icons/icon.svg)
+# Tauri-generated platform icons (not needed for macOS-only app)
+src-tauri/icons/Square*.png
+src-tauri/icons/StoreLogo.png
+src-tauri/icons/ios/
+src-tauri/icons/android/

@@ -3,8 +3,8 @@ use scribebuddy_core::audio::cpal_capture::CpalAudioSource;
 use scribebuddy_core::audio::screencapturekit::ScreenCaptureKitSource;
 use scribebuddy_core::transcription::model::ModelManager;
 use scribebuddy_core::{
-    export::markdown::MarkdownExporter, ModelSize, RunningApp, SessionConfig, SessionState,
-    TranscriptSegment,
+    export::markdown::MarkdownExporter, ModelSize, RunningApp, SessionConfig, SessionMeta,
+    SessionState, TranscriptSegment,
 };
 use crossbeam_channel;
 use tauri::{AppHandle, Emitter, State};
@@ -60,12 +60,30 @@ pub fn set_language(
 }
 
 #[tauri::command]
-pub fn set_chunk_duration(
+pub async fn set_chunk_duration(
     state: State<'_, AppState>,
     seconds: f32,
 ) -> Result<(), String> {
-    { state.config.lock().chunk_duration_secs = seconds.clamp(1.0, 5.0); }
-    state.save_config()
+    let new_config = {
+        let mut config = state.config.lock();
+        config.chunk_duration_secs = seconds.clamp(1.0, 5.0);
+        config.clone()
+    };
+    state.save_config()?;
+
+    // If recording, transparently restart the processor with the new chunk size.
+    let is_recording = state.session.lock().state() == SessionState::Recording;
+    if is_recording {
+        let segment_tx = state.segment_tx.lock().clone()
+            .ok_or("Session channels not initialized")?;
+        let error_tx = state.error_tx.lock().clone()
+            .ok_or("Session channels not initialized")?;
+        let mut session = state.session.lock();
+        session.update_config(new_config);
+        session.pause().map_err(|e| e.to_string())?;
+        session.resume(segment_tx, error_tx).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -299,7 +317,64 @@ pub async fn export_markdown_to_file(
             std::fs::write(&path, content).map_err(|e| e.to_string())?;
             Ok(true)
         }
-        _ => Ok(false), // User cancelled or non-filesystem path
+        _ => Ok(false),
+    }
+}
+
+#[tauri::command]
+pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionMeta>, String> {
+    state.list_sessions()
+}
+
+#[tauri::command]
+pub fn load_session(
+    state: State<'_, AppState>,
+    timestamp: u64,
+) -> Result<Vec<TranscriptSegment>, String> {
+    state.load_session(timestamp)
+}
+
+#[tauri::command]
+pub fn delete_session(
+    state: State<'_, AppState>,
+    timestamp: u64,
+) -> Result<(), String> {
+    state.delete_session(timestamp)
+}
+
+#[tauri::command]
+pub async fn export_session_to_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    timestamp: u64,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let segments = state.load_session(timestamp)?;
+    if segments.is_empty() {
+        return Err("Session has no segments to export".to_string());
+    }
+
+    let content = MarkdownExporter::export(&segments);
+    let date = chrono::DateTime::from_timestamp(timestamp as i64, 0)
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| timestamp.to_string());
+    let default_name = format!("meeting-{}.md", date);
+
+    let file_path = app
+        .dialog()
+        .file()
+        .set_title("Export Session")
+        .set_file_name(&default_name)
+        .add_filter("Markdown", &["md"])
+        .blocking_save_file();
+
+    match file_path {
+        Some(tauri_plugin_dialog::FilePath::Path(path)) => {
+            std::fs::write(&path, content).map_err(|e| e.to_string())?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 

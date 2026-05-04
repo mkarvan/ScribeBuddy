@@ -1,7 +1,7 @@
 use crossbeam_channel::Sender;
 use parking_lot::Mutex;
 use scribebuddy_core::session::manager::SessionManager;
-use scribebuddy_core::{SessionConfig, TranscriptSegment};
+use scribebuddy_core::{SessionConfig, SessionMeta, TranscriptSegment};
 use std::path::{Path, PathBuf};
 
 pub struct AppState {
@@ -88,6 +88,52 @@ impl AppState {
 
     pub fn clear_segments(&self) {
         self.accumulated.write().clear();
+    }
+
+    fn sessions_dir(&self) -> PathBuf {
+        self.config_path.parent().unwrap_or(std::path::Path::new(".")).join("sessions")
+    }
+
+    pub fn list_sessions(&self) -> Result<Vec<SessionMeta>, String> {
+        let dir = self.sessions_dir();
+        if !dir.exists() {
+            return Ok(vec![]);
+        }
+
+        let mut metas: Vec<SessionMeta> = std::fs::read_dir(&dir)
+            .map_err(|e| format!("Cannot read sessions dir: {}", e))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.path().extension().map(|x| x == "json").unwrap_or(false)
+            })
+            .filter_map(|entry| {
+                let path = entry.path();
+                let stem = path.file_stem()?.to_str()?.to_string();
+                let ts: u64 = stem.strip_prefix("session-")?.parse().ok()?;
+                let json = std::fs::read_to_string(&path).ok()?;
+                let segments: Vec<TranscriptSegment> = serde_json::from_str(&json).ok()?;
+                let segment_count = segments.len();
+                let duration_secs = segments.last().map(|s| s.end_time.max(0) as u64).unwrap_or(0);
+                Some(SessionMeta { timestamp: ts, duration_secs, segment_count })
+            })
+            .collect();
+
+        metas.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(metas)
+    }
+
+    pub fn load_session(&self, timestamp: u64) -> Result<Vec<TranscriptSegment>, String> {
+        let path = self.sessions_dir().join(format!("session-{}.json", timestamp));
+        let json = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Cannot read session: {}", e))?;
+        serde_json::from_str(&json)
+            .map_err(|e| format!("Cannot parse session: {}", e))
+    }
+
+    pub fn delete_session(&self, timestamp: u64) -> Result<(), String> {
+        let path = self.sessions_dir().join(format!("session-{}.json", timestamp));
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("Cannot delete session: {}", e))
     }
 }
 

@@ -80,10 +80,12 @@ export class Settings {
             this.setModel(this.modelSelect.value);
         });
 
+        let chunkDebounce = null;
         this.chunkSlider.addEventListener('input', () => {
             const val = this.chunkSlider.value;
             this.chunkValueEl.textContent = `${val}s`;
-            this.setChunkDuration(val);
+            clearTimeout(chunkDebounce);
+            chunkDebounce = setTimeout(() => this.setChunkDuration(val), 400);
         });
 
         this.captureMode.addEventListener('change', () => {

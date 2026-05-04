@@ -31,6 +31,10 @@ impl SessionManager {
         self.state.clone()
     }
 
+    pub fn update_config(&mut self, config: SessionConfig) {
+        self.config = config;
+    }
+
     pub fn running(&self) -> Arc<AtomicBool> {
         self.running.clone()
     }

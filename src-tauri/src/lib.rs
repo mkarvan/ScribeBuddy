@@ -55,6 +55,10 @@ pub fn run() {
             commands::export_markdown,
             commands::export_markdown_to_file,
             commands::set_language,
+            commands::list_sessions,
+            commands::load_session,
+            commands::delete_session,
+            commands::export_session_to_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ScribeBuddy");

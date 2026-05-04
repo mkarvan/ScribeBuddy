@@ -46,6 +46,8 @@ header {
     flex-shrink: 0;
 }
 
+.header-spacer { flex: 1; }
+
 header h1 {
     font-size: 1.1rem;
     font-weight: 600;
@@ -219,6 +221,120 @@ header h1 {
     border-color: var(--red);
     color: #fff;
 }
+
+/* Main area: sidebar + content */
+#main-area {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+#session-sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    transition: width 0.2s ease, opacity 0.2s ease;
+    overflow: hidden;
+}
+
+#session-sidebar.closed {
+    width: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+#session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+}
+
+.session-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+}
+
+.session-item:hover { background: var(--surface-light); }
+
+.session-item-info { flex: 1; min-width: 0; }
+
+.session-item-date {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.session-item-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.session-item-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.session-item-actions .sm-btn {
+    padding: 2px 6px;
+    font-size: 0.75rem;
+}
+
+.session-delete-btn:hover { border-color: var(--red) !important; color: var(--red); }
+
+.session-empty {
+    padding: 24px 14px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-align: center;
+    font-style: italic;
+}
+
+#content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Banner shown when viewing a past session */
+#session-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    background: var(--surface-light);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+#session-banner.hidden { display: none; }
 
 #transcript-container {
     flex: 1;

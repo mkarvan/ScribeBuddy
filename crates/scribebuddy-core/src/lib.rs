@@ -138,6 +138,13 @@ pub struct RunningApp {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMeta {
+    pub timestamp: u64,
+    pub duration_secs: u64,
+    pub segment_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

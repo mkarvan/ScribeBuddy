@@ -11,6 +11,8 @@
         <header>
             <h1>ScribeBuddy</h1>
             <span id="status-badge">Idle</span>
+            <div class="header-spacer"></div>
+            <button id="history-toggle-btn" class="sm-btn" title="Session history">&#128196; History</button>
         </header>
 
         <div id="settings-panel">
@@ -90,9 +92,26 @@
             <button id="export-btn" class="ctrl-btn" disabled>Export .md</button>
         </div>
 
-        <div id="transcript-container">
-            <div id="transcript">
-                <p class="placeholder">Start a session to see live transcription here...</p>
+        <div id="main-area">
+            <aside id="session-sidebar" class="closed">
+                <div class="sidebar-header">
+                    <span>Session History</span>
+                    <button id="sidebar-close-btn" class="sm-btn" title="Close">&#x2715;</button>
+                </div>
+                <div id="session-list"></div>
+            </aside>
+
+            <div id="content-area">
+                <div id="session-banner" class="hidden">
+                    <span id="session-banner-label"></span>
+                    <button id="session-back-btn" class="sm-btn">&#x2190; Live</button>
+                </div>
+
+                <div id="transcript-container">
+                    <div id="transcript">
+                        <p class="placeholder">Start a session to see live transcription here...</p>
+                    </div>
+                </div>
             </div>
         </div>
 

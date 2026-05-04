@@ -1,7 +1,5 @@
 use crate::state::AppState;
-use scribebuddy_core::audio::capture::AudioSource;
 use scribebuddy_core::audio::cpal_capture::CpalAudioSource;
-use scribebuddy_core::audio::processor::AudioProcessor;
 use scribebuddy_core::audio::screencapturekit::ScreenCaptureKitSource;
 use scribebuddy_core::transcription::model::ModelManager;
 use scribebuddy_core::{
@@ -9,7 +7,6 @@ use scribebuddy_core::{
     TranscriptSegment,
 };
 use crossbeam_channel;
-use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
@@ -24,7 +21,7 @@ pub fn list_audio_devices() -> Vec<String> {
 
 #[tauri::command]
 pub fn get_session_state(state: State<'_, AppState>) -> SessionState {
-    state.session_state.read().clone()
+    state.session.lock().state()
 }
 
 #[tauri::command]
@@ -152,21 +149,14 @@ pub async fn start_session(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let current = state.session_state.read().clone();
-    if current != SessionState::Idle && current != SessionState::Stopped {
-        return Err(format!("Cannot start: session is {}", current));
-    }
-
     let config = state.config.lock().clone();
+
     let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
     if !model_mgr.is_model_available(&config.model_size, config.is_multilingual()) {
         return Err("Whisper model not found. Download it first.".to_string());
     }
 
     state.clear_segments();
-
-    let running = state.running.clone();
-    running.store(true, Ordering::SeqCst);
 
     let (segment_tx, segment_rx) = crossbeam_channel::bounded(512);
     let (error_tx, error_rx) = crossbeam_channel::bounded(16);
@@ -175,50 +165,21 @@ pub async fn start_session(
     *state.segment_tx.lock() = Some(segment_tx.clone());
     *state.error_tx.lock() = Some(error_tx.clone());
 
-    if config.use_screencapturekit {
-        let mut you: Box<dyn AudioSource> = Box::new(CpalAudioSource::new("Microphone", 44100, 1));
-        you.start().map_err(|e| format!("Failed to start mic: {}", e))?;
-        let you_consumer = you.take_consumer().ok_or("No mic consumer")?;
-        let you_rate = you.sample_rate();
-
-        let mut remote: Box<dyn AudioSource> = Box::new(ScreenCaptureKitSource::new(
-            "System Audio",
-            config.target_app_bundle_id.clone(),
-        ));
-        remote.start().map_err(|e| format!("Failed to start system audio: {}", e))?;
-        let remote_consumer = remote.take_consumer().ok_or("No remote consumer")?;
-        let remote_rate = remote.sample_rate();
-
-        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx.clone());
-        let handle = std::thread::spawn(move || {
-            processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
-        });
-
-        *state.you_source.lock() = Some(you);
-        *state.remote_source.lock() = Some(remote);
-        *state.processor_handle.lock() = Some(handle);
-    } else {
-        let mut you: Box<dyn AudioSource> = Box::new(CpalAudioSource::new("Microphone", 44100, 1));
-        you.start().map_err(|e| format!("Failed to start mic: {}", e))?;
-        let you_consumer = you.take_consumer().ok_or("No mic consumer")?;
-        let you_rate = you.sample_rate();
-
-        let mut remote: Box<dyn AudioSource> = Box::new(CpalAudioSource::new("BlackHole", 44100, 2));
-        remote.start().map_err(|e| format!("Failed to start BlackHole: {}", e))?;
-        let remote_consumer = remote.take_consumer().ok_or("No remote consumer")?;
-        let remote_rate = remote.sample_rate();
-
-        let processor = AudioProcessor::new(config.clone(), running.clone(), segment_tx.clone(), error_tx.clone());
-        let handle = std::thread::spawn(move || {
-            processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
-        });
-
-        *state.you_source.lock() = Some(you);
-        *state.remote_source.lock() = Some(remote);
-        *state.processor_handle.lock() = Some(handle);
+    {
+        let mut session = state.session.lock();
+        if config.use_screencapturekit {
+            session.set_you_source(Box::new(CpalAudioSource::new("Microphone", 44100, 1)));
+            session.set_remote_source(Box::new(ScreenCaptureKitSource::new(
+                "System Audio",
+                config.target_app_bundle_id.clone(),
+            )));
+        } else {
+            session.set_you_source(Box::new(CpalAudioSource::new("Microphone", 44100, 1)));
+            session.set_remote_source(Box::new(CpalAudioSource::new("BlackHole", 44100, 2)));
+        }
+        session.start(segment_tx.clone(), error_tx.clone()).map_err(|e| e.to_string())?;
     }
 
-    *state.session_state.write() = SessionState::Recording;
     let _ = app.emit("session-state-changed", SessionState::Recording);
 
     // Listener thread: drain segment channel, emit to frontend.
@@ -249,28 +210,8 @@ pub async fn pause_session(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let current = state.session_state.read().clone();
-    if current != SessionState::Recording {
-        return Err(format!("Cannot pause: session is {}", current));
-    }
-
-    state.running.store(false, Ordering::SeqCst);
-
-    if let Some(ref mut you) = *state.you_source.lock() {
-        let _ = you.stop();
-    }
-    if let Some(ref mut remote) = *state.remote_source.lock() {
-        let _ = remote.stop();
-    }
-
-    // Wait for the processor thread to exit before we declare paused.
-    if let Some(handle) = state.processor_handle.lock().take() {
-        let _ = handle.join();
-    }
-
-    *state.session_state.write() = SessionState::Paused;
+    state.session.lock().pause().map_err(|e| e.to_string())?;
     let _ = app.emit("session-state-changed", SessionState::Paused);
-    log::info!("Session paused");
     Ok(())
 }
 
@@ -279,45 +220,10 @@ pub async fn resume_session(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let current = state.session_state.read().clone();
-    if current != SessionState::Paused {
-        return Err(format!("Cannot resume: session is {}", current));
-    }
-
-    state.running.store(true, Ordering::SeqCst);
-
-    // Each AudioSource::start() creates a fresh ring buffer; take the new consumer.
-    let (you_consumer, you_rate) = {
-        let mut lock = state.you_source.lock();
-        let src = lock.as_mut().ok_or("No mic source")?;
-        src.start().map_err(|e| format!("Failed to resume mic: {}", e))?;
-        let consumer = src.take_consumer().ok_or("No mic consumer after resume")?;
-        let rate = src.sample_rate();
-        (consumer, rate)
-    };
-    let (remote_consumer, remote_rate) = {
-        let mut lock = state.remote_source.lock();
-        let src = lock.as_mut().ok_or("No remote source")?;
-        src.start().map_err(|e| format!("Failed to resume remote: {}", e))?;
-        let consumer = src.take_consumer().ok_or("No remote consumer after resume")?;
-        let rate = src.sample_rate();
-        (consumer, rate)
-    };
-
-    // Spawn a new processor thread connected to the same channels as the listeners.
-    let config = state.config.lock().clone();
-    let running = state.running.clone();
     let segment_tx = state.segment_tx.lock().clone().ok_or("Session channels not initialized")?;
     let error_tx = state.error_tx.lock().clone().ok_or("Session channels not initialized")?;
-    let processor = AudioProcessor::new(config, running, segment_tx, error_tx);
-    let handle = std::thread::spawn(move || {
-        processor.run(you_consumer, remote_consumer, you_rate, remote_rate);
-    });
-    *state.processor_handle.lock() = Some(handle);
-
-    *state.session_state.write() = SessionState::Recording;
+    state.session.lock().resume(segment_tx, error_tx).map_err(|e| e.to_string())?;
     let _ = app.emit("session-state-changed", SessionState::Recording);
-    log::info!("Session resumed");
     Ok(())
 }
 
@@ -326,29 +232,12 @@ pub async fn stop_session(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let current = state.session_state.read().clone();
-    if current != SessionState::Recording && current != SessionState::Paused {
-        return Err(format!("Cannot stop: session is {}", current));
-    }
-
-    state.running.store(false, Ordering::SeqCst);
-
-    if let Some(ref mut you) = *state.you_source.lock() {
-        let _ = you.stop();
-    }
-    if let Some(ref mut remote) = *state.remote_source.lock() {
-        let _ = remote.stop();
-    }
-
-    if let Some(handle) = state.processor_handle.lock().take() {
-        let _ = handle.join();
-    }
+    state.session.lock().stop().map_err(|e| e.to_string())?;
 
     // Drop stored senders → channels close → listener threads exit.
     *state.segment_tx.lock() = None;
     *state.error_tx.lock() = None;
 
-    *state.session_state.write() = SessionState::Stopped;
     let _ = app.emit("session-state-changed", SessionState::Stopped);
 
     // Auto-save on a background thread so serializing a large transcript

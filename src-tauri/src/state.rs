@@ -1,21 +1,15 @@
 use crossbeam_channel::Sender;
 use parking_lot::Mutex;
-use scribebuddy_core::audio::capture::AudioSource;
-use scribebuddy_core::{SessionConfig, SessionState, TranscriptSegment};
+use scribebuddy_core::session::manager::SessionManager;
+use scribebuddy_core::{SessionConfig, TranscriptSegment};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 
 pub struct AppState {
     pub config: Mutex<SessionConfig>,
     pub config_path: PathBuf,
-    pub session_state: Arc<parking_lot::RwLock<SessionState>>,
-    pub running: Arc<AtomicBool>,
-    pub accumulated: Arc<parking_lot::RwLock<Vec<TranscriptSegment>>>,
-    pub you_source: Mutex<Option<Box<dyn AudioSource>>>,
-    pub remote_source: Mutex<Option<Box<dyn AudioSource>>>,
-    pub processor_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
-    pub model_downloading: Arc<parking_lot::RwLock<bool>>,
+    pub session: Mutex<SessionManager>,
+    pub accumulated: std::sync::Arc<parking_lot::RwLock<Vec<TranscriptSegment>>>,
+    pub model_downloading: std::sync::Arc<parking_lot::RwLock<bool>>,
     /// Held so the segment/error listener threads outlive pause/resume cycles.
     pub segment_tx: Mutex<Option<Sender<TranscriptSegment>>>,
     pub error_tx: Mutex<Option<Sender<String>>>,
@@ -23,16 +17,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: SessionConfig, config_path: PathBuf) -> Self {
+        let session = SessionManager::new(config.clone());
         Self {
             config: Mutex::new(config),
             config_path,
-            session_state: Arc::new(parking_lot::RwLock::new(SessionState::Idle)),
-            running: Arc::new(AtomicBool::new(false)),
-            accumulated: Arc::new(parking_lot::RwLock::new(Vec::new())),
-            you_source: Mutex::new(None),
-            remote_source: Mutex::new(None),
-            processor_handle: Mutex::new(None),
-            model_downloading: Arc::new(parking_lot::RwLock::new(false)),
+            session: Mutex::new(session),
+            accumulated: std::sync::Arc::new(parking_lot::RwLock::new(Vec::new())),
+            model_downloading: std::sync::Arc::new(parking_lot::RwLock::new(false)),
             segment_tx: Mutex::new(None),
             error_tx: Mutex::new(None),
         }
@@ -61,8 +52,8 @@ impl AppState {
             .map_err(|e| format!("Config write error: {}", e))
     }
 
-    /// Standalone save used by the background thread in stop_session so the
-    /// serialization doesn't block the Tauri command and freeze the UI.
+    /// Standalone save used by the background thread in stop_session so
+    /// serializing a large transcript does not block the UI.
     pub fn write_transcript(config_path: PathBuf, segments: Vec<TranscriptSegment>) -> Result<(), String> {
         if segments.is_empty() {
             return Ok(());

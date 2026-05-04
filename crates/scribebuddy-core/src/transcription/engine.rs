@@ -3,19 +3,16 @@ use super::model::ModelManager;
 use crate::audio::capture::{is_silence, TARGET_SAMPLE_RATE};
 use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 pub struct WhisperEngine {
     context: whisper_rs::WhisperContext,
     full_params: whisper_rs::FullParams<'static, 'static>,
     silence_threshold: f32,
     chunk_duration_samples: usize,
-    running: Arc<AtomicBool>,
 }
 
 impl WhisperEngine {
-    pub fn new(config: &SessionConfig) -> Result<(Self, ModelManager)> {
+    pub fn new(config: &SessionConfig) -> Result<Self> {
         let model_mgr = ModelManager::new()?;
         let multilingual = config.is_multilingual();
         let model_path = model_mgr.model_path(&config.model_size, multilingual);
@@ -61,24 +58,12 @@ impl WhisperEngine {
         let chunk_duration_samples =
             (config.chunk_duration_secs * TARGET_SAMPLE_RATE as f32) as usize;
 
-        Ok((
-            Self {
-                context,
-                full_params: params,
-                silence_threshold: config.silence_threshold_rms,
-                chunk_duration_samples,
-                running: Arc::new(AtomicBool::new(false)),
-            },
-            model_mgr,
-        ))
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
-    }
-
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
+        Ok(Self {
+            context,
+            full_params: params,
+            silence_threshold: config.silence_threshold_rms,
+            chunk_duration_samples,
+        })
     }
 
     pub fn process_chunk(

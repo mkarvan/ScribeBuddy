@@ -53,7 +53,7 @@ impl AudioProcessor {
             Err(e) => {
                 let msg = format!("Failed to create resampler (you): {}", e);
                 log::error!("{}", msg);
-                let _ = self.error_tx.send(msg);
+                let _ = self.error_tx.try_send(msg);
                 return;
             }
         };
@@ -63,17 +63,17 @@ impl AudioProcessor {
             Err(e) => {
                 let msg = format!("Failed to create resampler (remote): {}", e);
                 log::error!("{}", msg);
-                let _ = self.error_tx.send(msg);
+                let _ = self.error_tx.try_send(msg);
                 return;
             }
         };
 
-        let (mut engine, _model_mgr) = match WhisperEngine::new(&self.config) {
+        let mut engine = match WhisperEngine::new(&self.config) {
             Ok(e) => e,
             Err(err) => {
                 let msg = format!("Failed to load Whisper model: {}", err);
                 log::error!("{}", msg);
-                let _ = self.error_tx.send(msg);
+                let _ = self.error_tx.try_send(msg);
                 return;
             }
         };
@@ -131,7 +131,7 @@ impl AudioProcessor {
                                 &self.segment_tx,
                             ) {
                                 log::error!("You Whisper error: {}", e);
-                                let _ = self.error_tx.send(format!("Whisper error (You): {}", e));
+                                let _ = self.error_tx.try_send(format!("Whisper error (You): {}", e));
                             }
                         }
                         Err(e) => log::error!("Resample error (you): {}", e),
@@ -176,7 +176,7 @@ impl AudioProcessor {
                                 &self.segment_tx,
                             ) {
                                 log::error!("Remote Whisper error: {}", e);
-                                let _ = self.error_tx.send(format!("Whisper error (Remote): {}", e));
+                                let _ = self.error_tx.try_send(format!("Whisper error (Remote): {}", e));
                             }
                         }
                         Err(e) => log::error!("Resample error (remote): {}", e),

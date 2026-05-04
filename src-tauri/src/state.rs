@@ -57,20 +57,18 @@ impl AppState {
     pub fn save_config(&self) -> Result<(), String> {
         let json = serde_json::to_string_pretty(&*self.config.lock())
             .map_err(|e| format!("Config serialize error: {}", e))?;
-        std::fs::write(&self.config_path, json)
+        atomic_write(&self.config_path, json.as_bytes())
             .map_err(|e| format!("Config write error: {}", e))
     }
 
-    /// Auto-save accumulated transcript segments as JSON when a session stops.
-    /// Errors are logged by the caller but do not fail the stop command.
-    pub fn save_session_transcript(&self) -> Result<(), String> {
-        let segments = self.accumulated.read().clone();
+    /// Standalone save used by the background thread in stop_session so the
+    /// serialization doesn't block the Tauri command and freeze the UI.
+    pub fn write_transcript(config_path: PathBuf, segments: Vec<TranscriptSegment>) -> Result<(), String> {
         if segments.is_empty() {
             return Ok(());
         }
 
-        let sessions_dir = self
-            .config_path
+        let sessions_dir = config_path
             .parent()
             .ok_or("config_path has no parent directory")?
             .join("sessions");
@@ -86,15 +84,11 @@ impl AppState {
 
         let json = serde_json::to_string_pretty(&segments)
             .map_err(|e| format!("Transcript serialize error: {}", e))?;
-        std::fs::write(&path, json)
+        atomic_write(&path, json.as_bytes())
             .map_err(|e| format!("Transcript write error: {}", e))?;
 
         log::info!("Transcript auto-saved to {:?}", path);
         Ok(())
-    }
-
-    pub fn push_segment(&self, segment: TranscriptSegment) {
-        self.accumulated.write().push(segment);
     }
 
     pub fn get_segments(&self) -> Vec<TranscriptSegment> {
@@ -104,4 +98,11 @@ impl AppState {
     pub fn clear_segments(&self) {
         self.accumulated.write().clear();
     }
+}
+
+/// Write-to-temp-then-rename so a crash mid-write never corrupts the target file.
+fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, path)
 }

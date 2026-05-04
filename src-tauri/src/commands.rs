@@ -351,10 +351,15 @@ pub async fn stop_session(
     *state.session_state.write() = SessionState::Stopped;
     let _ = app.emit("session-state-changed", SessionState::Stopped);
 
-    // Auto-save transcript; log warning but don't fail the stop command
-    if let Err(e) = state.save_session_transcript() {
-        log::warn!("Auto-save transcript failed: {}", e);
-    }
+    // Auto-save on a background thread so serializing a large transcript
+    // doesn't block the Tauri command and freeze the UI.
+    let segments = state.get_segments();
+    let config_path = state.config_path.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = crate::state::AppState::write_transcript(config_path, segments) {
+            log::warn!("Auto-save transcript failed: {}", e);
+        }
+    });
 
     log::info!("Session stopped");
     Ok(())
@@ -409,10 +414,3 @@ pub async fn export_markdown_to_file(
     }
 }
 
-#[tauri::command]
-pub fn add_transcript_segment(
-    state: State<'_, AppState>,
-    segment: TranscriptSegment,
-) {
-    state.push_segment(segment);
-}

@@ -54,7 +54,6 @@ pub fn run() {
             commands::get_transcript,
             commands::export_markdown,
             commands::export_markdown_to_file,
-            commands::add_transcript_segment,
             commands::set_language,
         ])
         .run(tauri::generate_context!())

@@ -11,19 +11,7 @@ macOS meeting transcription tool. Captures Zoom, Teams, Google Meet, and any bro
 
 ## Building
 
-### Step 1 — Create a local signing certificate (one-time)
-
-This gives the app a stable identity so macOS retains the Screen Recording permission across rebuilds. You only do this once.
-
-1. Open **Keychain Access**
-2. Menu bar → **Certificate Assistant → Create a Certificate…**
-3. Fill in:
-   - **Name:** `ScribeBuddy Dev`
-   - **Identity Type:** Self Signed Root
-   - **Certificate Type:** Code Signing
-4. Click **Continue** → **Done**
-
-### Step 2 — Clone and build
+### Step 1 — Clone and build
 
 ```bash
 git clone https://github.com/mkarvan/ScribeBuddy.git
@@ -31,29 +19,27 @@ cd ScribeBuddy
 ./build.sh
 ```
 
-The script runs the test suite, builds the app, signs it, and outputs:
+On the **first run**, `build.sh` automatically creates a local code-signing certificate in your Keychain so macOS retains the Screen Recording permission across rebuilds. macOS will ask for your **login password once** to set the trust — that's normal and only happens this one time.
 
-```
-target/release/bundle/macos/ScribeBuddy.app
-```
+After that, every subsequent `./build.sh` builds silently with no prompts.
 
-To build and install in one step:
+To build and copy straight to `/Applications`:
 
 ```bash
-./build.sh --install   # copies to /Applications automatically
+./build.sh --install
 ```
 
-### Step 3 — First launch
+### Step 2 — First launch
 
-The app is signed with a local certificate, not notarized by Apple, so Gatekeeper will block the first run:
+The app is signed with a local certificate, not notarized by Apple, so Gatekeeper blocks it the first time:
 
-1. Double-click **ScribeBuddy.app** — click away the "cannot be opened" dialog
+1. Double-click **ScribeBuddy.app** — dismiss the "cannot be opened" dialog
 2. Open **System Settings → Privacy & Security**
 3. Scroll down and click **Open Anyway**
 
 This only happens once.
 
-### Step 4 — Grant permissions
+### Step 3 — Grant permissions
 
 On first launch macOS will ask for:
 
@@ -62,11 +48,10 @@ On first launch macOS will ask for:
 
 Click **Allow** for both.
 
-### Step 5 — Download a Whisper model
+### Step 4 — Download a Whisper model
 
-1. Open ScribeBuddy
-2. In the settings bar, choose a **Model** size (`small` is a good default — 461 MB, ~4 s latency)
-3. Click the **↙ Download** button and wait for it to complete
+1. In the settings bar, choose a **Model** size (`small` is a good default — 461 MB, ~4 s latency)
+2. Click the **↙ Download** button and wait for it to complete
 
 Models are stored in `~/Library/Application Support/ai.scribebuddy.app/` and reused across launches.
 
@@ -89,15 +74,15 @@ The test suite runs automatically before every `./build.sh` via `beforeBuildComm
 
 ### Screen Recording permission resets after every rebuild
 
-This happens when the app is unsigned — macOS treats each new binary as a different app. Completing Step 1 (local signing certificate) fixes it permanently.
+This means the app was built without the signing certificate (e.g. with `cargo tauri build` directly instead of `./build.sh`). Always use `./build.sh` — it signs the app with a stable local identity so macOS retains the permission.
 
-If you've already done Step 1 but the permission is stuck in a denied state, reset it and re-grant:
+If the permission is stuck in a denied state, reset it and re-grant:
 
 ```bash
 tccutil reset ScreenCapture ai.scribebuddy.app
 ```
 
-Relaunch the app and click **Allow** when prompted.
+Then relaunch and click **Allow** when prompted.
 
 ### App isn't listed in Screen & System Audio Recording settings
 
@@ -109,7 +94,7 @@ Open **System Settings → Privacy & Security → Microphone** and confirm Scrib
 
 ### "Apple cannot verify" on every launch
 
-Make sure you completed Step 1 (local signing certificate). Without it, Gatekeeper re-blocks the app after every rebuild.
+You're running the app without signing it first. Always use `./build.sh` — it signs the app automatically.
 
 ## Architecture
 

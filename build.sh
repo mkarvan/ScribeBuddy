@@ -27,6 +27,9 @@ xattr -rd com.apple.quarantine "$BUNDLE" 2>/dev/null || true
 
 # ── Optional: install to /Applications ───────────────────────────────────────
 if [[ "$1" == "--install" ]]; then
+    # Remove the old bundle first — cp -R into an existing .app merges rather
+    # than replaces, producing a corrupted bundle that macOS won't recognise.
+    rm -rf /Applications/ScribeBuddy.app
     cp -R "$BUNDLE" /Applications/ScribeBuddy.app
     xattr -rd com.apple.quarantine /Applications/ScribeBuddy.app 2>/dev/null || true
     echo "✓ Installed: /Applications/ScribeBuddy.app"

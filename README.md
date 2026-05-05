@@ -78,9 +78,6 @@ cargo test -p scribebuddy-core silence_gate
 # Dev mode with hot-reload (opens the app window directly)
 cargo tauri dev
 
-# Release build (produces .app + .dmg in target/release/bundle/)
-cargo tauri build
-
 # Check for unused dependencies
 cargo +nightly udeps --workspace
 
@@ -89,8 +86,39 @@ cargo expand -p scribebuddy-core session::manager
 ```
 
 > Integration tests in `crates/scribebuddy-core/tests/pipeline.rs` inject a `MockTranscriber` so they run without a real Whisper model.
+>
+> `cargo tauri build` runs the test suite automatically via `beforeBuildCommand` and aborts on failure.
+
+### Recommended build workflow (Makefile)
+
+Use `make` instead of `cargo tauri build` directly. It runs tests, builds, signs with a stable local identity, and strips the quarantine flag — all in one step.
+
+```bash
+# One-time setup: create a local code-signing certificate
+make setup-cert
+
+# Build, sign, and strip quarantine
+make build
+
+# Build + copy to /Applications
+make install
+
+# Hot-reload dev window
+make dev
+
+# Tests only
+make test
+```
+
+**Why signing matters for development:** macOS 15 ties Screen & System Audio Recording permission to the app's code signature. Without a consistent signing identity, every rebuild produces a new signature and macOS treats it as a new app — requiring you to re-grant the permission each time. `make setup-cert` creates a self-signed local certificate (no Apple Developer account needed) that stays the same across rebuilds, so the permission persists.
 
 ## Troubleshooting
+
+### Permission resets after every rebuild
+
+macOS 15 tracks Screen & System Audio Recording permission by code signature. Unsigned apps get a new signature on every rebuild, so macOS treats each build as a new app and asks for permission again.
+
+**Permanent fix:** run `make setup-cert` once to create a local self-signed certificate, then always build with `make build` or `make install`. The signing identity stays constant across rebuilds, so macOS retains the permission.
 
 ### Screen & System Audio Recording permission keeps prompting or is denied
 

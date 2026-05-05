@@ -30,6 +30,9 @@ Icon
 .env
 .env.local
 
+# Local code-signing identity (machine-specific, created by make setup-cert)
+.signing_identity
+
 # Tauri-generated platform icons (not needed for macOS-only app)
 src-tauri/icons/Square*.png
 src-tauri/icons/StoreLogo.png

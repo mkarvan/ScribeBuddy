@@ -25,6 +25,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.warn('Could not restore settings:', err);
     }
 
+    // Request SCK permission once at startup. This shows the system dialog exactly
+    // once if not yet granted. Subsequent launches skip the dialog (TCC cached).
+    try {
+        const granted = await window.__TAURI__.core.invoke('request_screen_capture_permission');
+        if (!granted) {
+            errorUI.show(
+                'Screen & System Audio Recording permission denied. ' +
+                'Open System Settings → Privacy & Security → Screen & System Audio Recording ' +
+                'and enable ScribeBuddy, then restart the app.',
+                0  // persistent — don't auto-dismiss
+            );
+        }
+    } catch (err) {
+        console.warn('Permission check failed:', err);
+    }
+
     // --- Model download events ---
     window.__TAURI__.event.listen('model-download-started', () => {
         downloadUI.show();

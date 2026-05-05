@@ -14,6 +14,13 @@ pub fn list_running_apps() -> Vec<RunningApp> {
     ScreenCaptureKitSource::enumerate_running_apps()
 }
 
+/// Triggers the macOS "Screen & System Audio Recording" permission dialog exactly once.
+/// Returns true when permission is granted, false when denied/deferred.
+#[tauri::command]
+pub fn request_screen_capture_permission() -> bool {
+    ScreenCaptureKitSource::request_permission()
+}
+
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<String> {
     CpalAudioSource::enumerate_input_devices()
@@ -195,7 +202,19 @@ pub async fn start_session(
             session.set_you_source(Box::new(CpalAudioSource::new("Microphone", 44100, 1)));
             session.set_remote_source(Box::new(CpalAudioSource::new("BlackHole", 44100, 2)));
         }
-        session.start(segment_tx.clone(), error_tx.clone()).map_err(|e| e.to_string())?;
+        session.start(segment_tx.clone(), error_tx.clone()).map_err(|e| {
+            let msg = e.to_string();
+            // TCC / permission-denied errors contain "declined" or "userDeclined".
+            // Give the user a direct actionable message instead of raw SCK error text.
+            if msg.to_lowercase().contains("declined") || msg.contains("-3801") {
+                "Screen & System Audio Recording permission is required. \
+                 Open System Settings → Privacy & Security → Screen & System Audio Recording \
+                 and enable ScribeBuddy. If it isn't listed, try starting a session first, \
+                 then grant the permission when the system dialog appears.".to_string()
+            } else {
+                msg
+            }
+        })?;
     }
 
     let _ = app.emit("session-state-changed", SessionState::Recording);

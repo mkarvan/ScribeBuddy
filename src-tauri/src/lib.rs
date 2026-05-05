@@ -38,6 +38,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_running_apps,
+            commands::request_screen_capture_permission,
             commands::list_audio_devices,
             commands::get_session_state,
             commands::set_target_app,

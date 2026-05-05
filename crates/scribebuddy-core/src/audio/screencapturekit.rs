@@ -129,32 +129,26 @@ impl ScreenCaptureKitSource {
         }
     }
 
-    /// Returns the subset of known meeting apps and browsers that are currently running.
-    /// Uses a fixed curated list so only relevant apps appear — no system processes.
-    /// If SCK isn't available, returns the full curated list so the user can still pick.
+    /// Returns the curated list of meeting apps and browsers.
+    /// Does NOT call SCShareableContent::get() — that triggers a TCC permission dialog
+    /// on every call on macOS 15, causing repeated system prompts. Permission is
+    /// requested once explicitly via request_permission() instead.
     pub fn enumerate_running_apps() -> Vec<crate::RunningApp> {
-        let known = Self::known_apps();
+        Self::known_apps()
+    }
 
+    /// Attempts to acquire SCK permission by calling SCShareableContent::get().
+    /// This is the only place that triggers the macOS "Screen & System Audio Recording"
+    /// permission dialog. Returns true if permission is (now) granted.
+    pub fn request_permission() -> bool {
         match SCShareableContent::get() {
-            Ok(content) => {
-                let running: std::collections::HashSet<String> = content
-                    .applications()
-                    .into_iter()
-                    .map(|a| a.bundle_identifier())
-                    .collect();
-
-                let filtered: Vec<crate::RunningApp> = known
-                    .into_iter()
-                    .filter(|app| running.contains(&app.bundle_id))
-                    .collect();
-
-                // If none of the known apps are running yet, return the full list
-                // so the user can pre-select before launching the meeting.
-                if filtered.is_empty() { Self::known_apps() } else { filtered }
+            Ok(_) => {
+                log::info!("SCK permission granted");
+                true
             }
             Err(e) => {
-                log::warn!("SCK enumerate failed (permission?): {:?}", e);
-                known
+                log::warn!("SCK permission not granted: {:?}", e);
+                false
             }
         }
     }

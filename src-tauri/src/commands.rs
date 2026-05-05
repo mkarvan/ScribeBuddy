@@ -370,7 +370,7 @@ pub async fn export_markdown_to_file(
     let content = MarkdownExporter::export(&segments);
     let default_name = format!(
         "meeting-{}.md",
-        chrono::Local::now().format("%Y-%m-%d")
+        chrono::Local::now().format("%Y-%m-%d_%H-%M")
     );
 
     let file_path = app
@@ -426,7 +426,7 @@ pub async fn export_session_to_file(
 
     let content = MarkdownExporter::export(&segments);
     let date = chrono::DateTime::from_timestamp(timestamp as i64, 0)
-        .map(|d| d.format("%Y-%m-%d").to_string())
+        .map(|d| chrono::DateTime::<chrono::Local>::from(d).format("%Y-%m-%d_%H-%M").to_string())
         .unwrap_or_else(|| timestamp.to_string());
     let default_name = format!("meeting-{}.md", date);
 

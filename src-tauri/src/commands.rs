@@ -4,10 +4,46 @@ use scribebuddy_core::audio::screencapturekit::ScreenCaptureKitSource;
 use scribebuddy_core::transcription::model::ModelManager;
 use scribebuddy_core::{
     export::markdown::MarkdownExporter, ModelSize, RunningApp, SessionConfig, SessionMeta,
-    SessionState, TranscriptSegment,
+    SessionState, Speaker, TranscriptSegment,
 };
 use crossbeam_channel;
 use tauri::{AppHandle, Emitter, State};
+
+/// Normalize text for echo comparison: lowercase, letters and spaces only.
+fn normalize_text(s: &str) -> Vec<String> {
+    s.chars()
+        .map(|c| if c.is_alphabetic() || c.is_whitespace() { c.to_ascii_lowercase() } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .map(String::from)
+        .collect()
+}
+
+/// Jaccard word-overlap similarity in [0, 1].
+fn text_similarity(a: &str, b: &str) -> f32 {
+    let wa: std::collections::HashSet<String> = normalize_text(a).into_iter().collect();
+    let wb: std::collections::HashSet<String> = normalize_text(b).into_iter().collect();
+    if wa.is_empty() || wb.is_empty() {
+        return 0.0;
+    }
+    let intersection = wa.intersection(&wb).count();
+    let union = wa.union(&wb).count();
+    intersection as f32 / union as f32
+}
+
+/// Returns true when a "You" segment is likely an echo of a recent "Remote" segment.
+/// Skips very short texts (< 4 words) where similarity is unreliable.
+fn is_echo(candidate: &TranscriptSegment, recent: &[TranscriptSegment], window_secs: i64) -> bool {
+    let words = normalize_text(&candidate.text);
+    if words.len() < 4 {
+        return false;
+    }
+    recent.iter().any(|seg| {
+        seg.speaker == Speaker::Remote
+            && (seg.start_time - candidate.start_time).unsigned_abs() <= window_secs as u64
+            && text_similarity(&candidate.text, &seg.text) >= 0.7
+    })
+}
 
 #[tauri::command]
 pub fn list_running_apps() -> Vec<RunningApp> {
@@ -219,12 +255,25 @@ pub async fn start_session(
 
     let _ = app.emit("session-state-changed", SessionState::Recording);
 
-    // Listener thread: drain segment channel, emit to frontend.
+    // Listener thread: drain segment channel, deduplicate echoes, emit to frontend.
     // Runs until AppState drops its segment_tx clone (on stop).
     let acc = state.accumulated.clone();
     let app_clone = app.clone();
+    let echo_window = (config.chunk_duration_secs * 2.0) as i64;
     std::thread::spawn(move || {
         while let Ok(segment) = segment_rx.recv() {
+            // Option 4: text dedup — drop "You" segments that closely match a
+            // recent "Remote" segment (mic picked up the speakers).
+            if segment.speaker == Speaker::You {
+                let echoed = {
+                    let segments = acc.read();
+                    is_echo(&segment, &segments, echo_window)
+                };
+                if echoed {
+                    log::info!("[dedup] echo suppressed: {:?}", segment.text);
+                    continue;
+                }
+            }
             let _ = app_clone.emit("transcript-segment", segment.clone());
             acc.write().push(segment);
         }

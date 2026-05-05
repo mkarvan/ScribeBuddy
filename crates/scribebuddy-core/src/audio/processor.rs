@@ -92,6 +92,12 @@ impl AudioProcessor {
             remote_chunk_target
         );
 
+        // Cross-gate: suppress mic transcription while remote audio is active.
+        // The gate lingers for 1.5 × chunk_duration after the last remote audio
+        // to cover buffer lag and the tail of speech.
+        let remote_gate = std::time::Duration::from_secs_f32(self.config.chunk_duration_secs * 1.5);
+        let mut remote_last_active: Option<std::time::Instant> = None;
+
         // Debug WAV dump: capture the first 30 s of resampled remote audio (what Whisper sees)
         // to ~/Desktop/scribebuddy_whisper_input.wav. Disabled in release builds.
         #[cfg(debug_assertions)]
@@ -124,7 +130,14 @@ impl AudioProcessor {
                     "[proc] you chunk ready: {} samples @{}Hz, rms={:.4}",
                     chunk.len(), you_source_rate, rms_you
                 );
-                if !is_silence(&chunk, silence_threshold) {
+                let remote_gated = remote_last_active
+                    .map(|t| t.elapsed() < remote_gate)
+                    .unwrap_or(false);
+                if remote_gated {
+                    log::debug!("[proc] you suppressed — remote active {:.0}ms ago",
+                        remote_last_active.unwrap().elapsed().as_millis());
+                }
+                if !is_silence(&chunk, silence_threshold) && !remote_gated {
                     match you_resampler.resample(&chunk) {
                         Ok(resampled) => {
                             let rms_out = (resampled.iter().map(|s| s * s).sum::<f32>() / resampled.len() as f32).sqrt();
@@ -161,6 +174,7 @@ impl AudioProcessor {
                     chunk.len(), remote_source_rate, rms_raw
                 );
                 if !is_silence(&chunk, silence_threshold) {
+                    remote_last_active = Some(std::time::Instant::now());
                     match remote_resampler.resample(&chunk) {
                         Ok(resampled) => {
                             let rms_out = (resampled.iter().map(|s| s * s).sum::<f32>() / resampled.len() as f32).sqrt();

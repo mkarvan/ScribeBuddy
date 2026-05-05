@@ -129,12 +129,31 @@ impl ScreenCaptureKitSource {
         }
     }
 
-    /// Returns the curated list of meeting apps and browsers.
-    /// Does NOT call SCShareableContent::get() — that triggers a TCC permission dialog
-    /// on every call on macOS 15, causing repeated system prompts. Permission is
-    /// requested once explicitly via request_permission() instead.
+    /// Returns the subset of known apps that are currently running.
+    /// Requires SCK permission to be granted first (via request_permission()).
+    /// Falls back to the full curated list if SCK is unavailable.
     pub fn enumerate_running_apps() -> Vec<crate::RunningApp> {
-        Self::known_apps()
+        let known = Self::known_apps();
+        match SCShareableContent::get() {
+            Ok(content) => {
+                let running: std::collections::HashSet<String> = content
+                    .applications()
+                    .into_iter()
+                    .map(|a| a.bundle_identifier())
+                    .collect();
+                let filtered: Vec<crate::RunningApp> = known
+                    .into_iter()
+                    .filter(|app| running.contains(&app.bundle_id))
+                    .collect();
+                // If no known app is running yet, show the full list so the user
+                // can pre-select before launching their meeting.
+                if filtered.is_empty() { Self::known_apps() } else { filtered }
+            }
+            Err(e) => {
+                log::warn!("SCK enumerate failed (permission not granted?): {:?}", e);
+                known
+            }
+        }
     }
 
     /// Attempts to acquire SCK permission by calling SCShareableContent::get().

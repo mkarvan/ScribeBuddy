@@ -11,22 +11,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settings = new Settings();
     const sessionHistory = new SessionHistory(transcript, errorUI);
 
-    await settings.loadApps();
-    await settings.checkModel();
-    settings.bind();
-    errorUI.bind();
-
-    // Restore persisted settings from backend
-    try {
-        const savedConfig = await window.__TAURI__.core.invoke('get_config');
-        settings.loadFromConfig(savedConfig);
-        settings.applyPendingApp();
-    } catch (err) {
-        console.warn('Could not restore settings:', err);
-    }
-
-    // Request SCK permission once at startup. This shows the system dialog exactly
-    // once if not yet granted. Subsequent launches skip the dialog (TCC cached).
+    // Request SCK permission first — before loadApps() — so that by the time
+    // enumerate_running_apps() calls SCShareableContent::get() the permission
+    // is already cached in TCC and no second dialog appears.
     try {
         const granted = await window.__TAURI__.core.invoke('request_screen_capture_permission');
         if (!granted) {
@@ -39,6 +26,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     } catch (err) {
         console.warn('Permission check failed:', err);
+    }
+
+    await settings.loadApps();
+    await settings.checkModel();
+    settings.bind();
+    errorUI.bind();
+
+    // Restore persisted settings from backend
+    try {
+        const savedConfig = await window.__TAURI__.core.invoke('get_config');
+        settings.loadFromConfig(savedConfig);
+        settings.applyPendingApp();
+    } catch (err) {
+        console.warn('Could not restore settings:', err);
     }
 
     // --- Model download events ---

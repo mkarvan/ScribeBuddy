@@ -106,14 +106,6 @@ impl AudioProcessor {
         let mut remote_offset_secs: i64 = 0;
         let silence_threshold = self.config.silence_threshold_rms;
 
-        // Cross-gate: suppress mic transcription while remote is actively speaking.
-        // Use a higher threshold than the silence gate so background codec noise /
-        // hold music doesn't permanently suppress the mic. Only genuine speech
-        // (RMS ≥ 0.015) arms the gate; it lingers for 1.5 × chunk_duration.
-        let remote_speech_threshold = silence_threshold.max(0.015);
-        let remote_gate = std::time::Duration::from_secs_f32(self.config.chunk_duration_secs * 1.5);
-        let mut remote_last_active: Option<std::time::Instant> = None;
-
         while self.running.load(Ordering::SeqCst) {
             let mut processed = false;
 
@@ -132,14 +124,7 @@ impl AudioProcessor {
                     "[proc] you chunk ready: {} samples @{}Hz, rms={:.4}",
                     chunk.len(), you_source_rate, rms_you
                 );
-                let remote_gated = remote_last_active
-                    .map(|t| t.elapsed() < remote_gate)
-                    .unwrap_or(false);
-                if remote_gated {
-                    log::debug!("[proc] you suppressed — remote active {:.0}ms ago",
-                        remote_last_active.unwrap().elapsed().as_millis());
-                }
-                if !is_silence(&chunk, silence_threshold) && !remote_gated {
+                if !is_silence(&chunk, silence_threshold) {
                     match you_resampler.resample(&chunk) {
                         Ok(resampled) => {
                             let rms_out = (resampled.iter().map(|s| s * s).sum::<f32>() / resampled.len() as f32).sqrt();
@@ -176,10 +161,6 @@ impl AudioProcessor {
                     chunk.len(), remote_source_rate, rms_raw
                 );
                 if !is_silence(&chunk, silence_threshold) {
-                    // Only arm the cross-gate on speech-level audio, not background noise.
-                    if rms_raw >= remote_speech_threshold {
-                        remote_last_active = Some(std::time::Instant::now());
-                    }
                     match remote_resampler.resample(&chunk) {
                         Ok(resampled) => {
                             let rms_out = (resampled.iter().map(|s| s * s).sum::<f32>() / resampled.len() as f32).sqrt();

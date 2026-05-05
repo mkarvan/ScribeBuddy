@@ -32,16 +32,17 @@ fn text_similarity(a: &str, b: &str) -> f32 {
 }
 
 /// Returns true when a "You" segment is likely an echo of a recent "Remote" segment.
-/// Skips very short texts (< 4 words) where similarity is unreliable.
+/// Requires ≥ 6 words and ≥ 0.85 Jaccard similarity to avoid false positives —
+/// only catches near-identical repeats, not similar-but-distinct speech.
 fn is_echo(candidate: &TranscriptSegment, recent: &[TranscriptSegment], window_secs: i64) -> bool {
     let words = normalize_text(&candidate.text);
-    if words.len() < 4 {
+    if words.len() < 6 {
         return false;
     }
     recent.iter().any(|seg| {
         seg.speaker == Speaker::Remote
             && (seg.start_time - candidate.start_time).unsigned_abs() <= window_secs as u64
-            && text_similarity(&candidate.text, &seg.text) >= 0.7
+            && text_similarity(&candidate.text, &seg.text) >= 0.85
     })
 }
 

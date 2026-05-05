@@ -7,7 +7,7 @@
     "frontendDist": "../frontend",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "beforeBuildCommand": "cargo test -p scribebuddy-core"
   },
   "app": {
     "windows": [

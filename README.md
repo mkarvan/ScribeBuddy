@@ -66,17 +66,62 @@ On first run, macOS will ask for:
 ## Development
 
 ```bash
-# Type-check everything without a full build
+# Type-check everything without a full build (fast, no Whisper compile)
 cargo check --workspace
 
-# Run all tests (34 unit + integration tests, no model needed)
+# Run all unit + integration tests (no model needed — uses MockTranscriber)
 cargo test -p scribebuddy-core
+
+# Run a single test by name
+cargo test -p scribebuddy-core silence_gate
 
 # Dev mode with hot-reload (opens the app window directly)
 cargo tauri dev
+
+# Release build (produces .app + .dmg in target/release/bundle/)
+cargo tauri build
+
+# Check for unused dependencies
+cargo +nightly udeps --workspace
+
+# Expand a macro for debugging (requires cargo-expand)
+cargo expand -p scribebuddy-core session::manager
 ```
 
 > Integration tests in `crates/scribebuddy-core/tests/pipeline.rs` inject a `MockTranscriber` so they run without a real Whisper model.
+
+## Troubleshooting
+
+### Screen & System Audio Recording permission keeps prompting or is denied
+
+On macOS 15, ScreenCaptureKit permission is tracked per app bundle in the TCC database. If the permission dialog keeps reappearing, or you see **"Screen & System Audio Recording permission denied"** after clicking Allow, the TCC entry for ScribeBuddy is likely stuck in a denied state (this can happen with unsigned apps after a rebuild).
+
+**Reset the permission and try again:**
+
+```bash
+tccutil reset ScreenCapture ai.scribebuddy.app
+```
+
+Then relaunch ScribeBuddy. The permission dialog will appear once — click **Allow**. After that it persists until you reset it again or reinstall.
+
+If ScribeBuddy is not listed under **System Settings → Privacy & Security → Screen & System Audio Recording**, start the app first (so macOS registers it), then check the list.
+
+### Microphone not captured / no "You" segments
+
+1. Open **System Settings → Privacy & Security → Microphone** and confirm ScribeBuddy is enabled.
+2. If it's missing from the list, quit the app, grant the permission in the system dialog on next launch, then verify it appears.
+
+### Whisper model not found
+
+Run the app, go to **Settings**, select a model size, and click **Download Model** (↙ button). The model downloads to `~/Library/Application Support/ai.scribebuddy.app/` and is reused across launches.
+
+### App blocked by Gatekeeper ("Apple cannot verify…")
+
+The app is unsigned. After the first block:
+
+1. Open **System Settings → Privacy & Security**
+2. Scroll down to the "ScribeBuddy was blocked" notice
+3. Click **Open Anyway**
 
 ## First Run
 

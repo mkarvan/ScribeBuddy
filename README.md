@@ -1,259 +1,143 @@
 # ScribeBuddy
 
-macOS meeting transcription tool that transcribes Zoom, Teams, and Google Meet in real-time using local Whisper models with Metal GPU acceleration.
-
-## Features
-
-- **Zero-setup audio capture** — ScreenCaptureKit captures meeting app audio with one permission prompt. No driver install needed.
-- **Local Whisper inference** — Runs entirely on-device. No data leaves your machine. Metal-accelerated on Apple Silicon, CPU fallback on Intel.
-- **Real-time transcription** — ~4 s end-to-end latency with 3-second audio chunks. RMS silence gate prevents hallucination on quiet audio.
-- **Speaker labels** — "You" (local mic) and "Remote" (meeting audio) tracked independently.
-- **Markdown export** — Timestamped transcript exported to `.md` files via native save dialog.
-- **Auto-save** — Transcripts saved automatically to `~/Library/Application Support/ai.scribebuddy.app/sessions/` on stop.
-- **Settings persistence** — Model size, language, chunk duration, and target app saved across restarts.
-- **System tray** — Lives in the menu bar; shows recording state.
+macOS meeting transcription tool. Captures Zoom, Teams, Google Meet, and any browser tab in real-time using a local Whisper model — no data leaves your machine.
 
 ## Requirements
 
-- **macOS 15.0 or later** (Sequoia+) — required for ScreenCaptureKit audio and Metal resource sets used by Whisper
-- **Apple Silicon recommended** — Metal GPU acceleration; Intel supported via CPU fallback
-- **Xcode 16+** with Command Line Tools (`xcode-select --install`)
-- **Rust** — install via [rustup.rs](https://rustup.rs)
-- **~500 MB** disk space for the default `small` Whisper model
+- macOS 15 (Sequoia) or later
+- Xcode 16+ Command Line Tools — `xcode-select --install`
+- Rust — [rustup.rs](https://rustup.rs)
+- Tauri CLI — `cargo install tauri-cli --version "^2.0"`
 
-## Building the macOS App
+## Building
 
-### 1. Install the Tauri CLI
+### Step 1 — Create a local signing certificate (one-time)
 
-```bash
-cargo install tauri-cli --version "^2.0"
-```
+This gives the app a stable identity so macOS retains the Screen Recording permission across rebuilds. You only do this once.
 
-### 2. Clone and build
+1. Open **Keychain Access**
+2. Menu bar → **Certificate Assistant → Create a Certificate…**
+3. Fill in:
+   - **Name:** `ScribeBuddy Dev`
+   - **Identity Type:** Self Signed Root
+   - **Certificate Type:** Code Signing
+4. Click **Continue** → **Done**
+
+### Step 2 — Clone and build
 
 ```bash
 git clone https://github.com/mkarvan/ScribeBuddy.git
 cd ScribeBuddy
-cargo tauri build
+./build.sh
 ```
 
-`MACOSX_DEPLOYMENT_TARGET=15.0` is set automatically via `.cargo/config.toml` — no manual env vars needed.
-
-The build produces:
+The script runs the test suite, builds the app, signs it, and outputs:
 
 ```
-target/release/bundle/macos/ScribeBuddy.app   ← drag to /Applications
+target/release/bundle/macos/ScribeBuddy.app
 ```
 
-Build time is roughly 3–5 minutes on Apple Silicon (Whisper compiles from source with Metal support).
+To build and install in one step:
 
-### 3. First launch — bypass Gatekeeper
+```bash
+./build.sh --install   # copies to /Applications automatically
+```
 
-The app is unsigned, so macOS will block it the first time:
+### Step 3 — First launch
 
-1. Double-click **ScribeBuddy.app** → "Apple cannot verify..."
+The app is signed with a local certificate, not notarized by Apple, so Gatekeeper will block the first run:
+
+1. Double-click **ScribeBuddy.app** — click away the "cannot be opened" dialog
 2. Open **System Settings → Privacy & Security**
 3. Scroll down and click **Open Anyway**
 
-After that it launches normally every time.
+This only happens once.
 
-### 4. Grant permissions
+### Step 4 — Grant permissions
 
-On first run, macOS will ask for:
-- **Microphone** — required to capture your voice
-- **Screen Recording** — required for ScreenCaptureKit to capture meeting audio (no screen content is recorded)
+On first launch macOS will ask for:
+
+- **Microphone** — to capture your voice
+- **Screen & System Audio Recording** — to capture meeting audio (no screen content is recorded)
+
+Click **Allow** for both.
+
+### Step 5 — Download a Whisper model
+
+1. Open ScribeBuddy
+2. In the settings bar, choose a **Model** size (`small` is a good default — 461 MB, ~4 s latency)
+3. Click the **↙ Download** button and wait for it to complete
+
+Models are stored in `~/Library/Application Support/ai.scribebuddy.app/` and reused across launches.
 
 ## Development
 
 ```bash
-# Type-check everything without a full build (fast, no Whisper compile)
-cargo check --workspace
-
-# Run all unit + integration tests (no model needed — uses MockTranscriber)
-cargo test -p scribebuddy-core
-
-# Run a single test by name
-cargo test -p scribebuddy-core silence_gate
-
-# Dev mode with hot-reload (opens the app window directly)
+# Hot-reload dev window (no signing needed)
 cargo tauri dev
 
-# Check for unused dependencies
-cargo +nightly udeps --workspace
+# Run the test suite
+cargo test -p scribebuddy-core
 
-# Expand a macro for debugging (requires cargo-expand)
-cargo expand -p scribebuddy-core session::manager
+# Type-check without a full build
+cargo check --workspace
 ```
 
-> Integration tests in `crates/scribebuddy-core/tests/pipeline.rs` inject a `MockTranscriber` so they run without a real Whisper model.
->
-> `cargo tauri build` runs the test suite automatically via `beforeBuildCommand` and aborts on failure.
-
-### Recommended build workflow (Makefile)
-
-Use `make` instead of `cargo tauri build` directly. It runs tests, builds, signs with a stable local identity, and strips the quarantine flag — all in one step.
-
-```bash
-# One-time setup: create a local code-signing certificate
-make setup-cert
-
-# Build, sign, and strip quarantine
-make build
-
-# Build + copy to /Applications
-make install
-
-# Hot-reload dev window
-make dev
-
-# Tests only
-make test
-```
-
-**Why signing matters for development:** macOS 15 ties Screen & System Audio Recording permission to the app's code signature. Without a consistent signing identity, every rebuild produces a new signature and macOS treats it as a new app — requiring you to re-grant the permission each time. `make setup-cert` creates a self-signed local certificate (no Apple Developer account needed) that stays the same across rebuilds, so the permission persists.
+The test suite runs automatically before every `./build.sh` via `beforeBuildCommand` in `tauri.conf.json`.
 
 ## Troubleshooting
 
-### Permission resets after every rebuild
+### Screen Recording permission resets after every rebuild
 
-macOS 15 tracks Screen & System Audio Recording permission by code signature. Unsigned apps get a new signature on every rebuild, so macOS treats each build as a new app and asks for permission again.
+This happens when the app is unsigned — macOS treats each new binary as a different app. Completing Step 1 (local signing certificate) fixes it permanently.
 
-**Permanent fix:** run `make setup-cert` once to create a local self-signed certificate, then always build with `make build` or `make install`. The signing identity stays constant across rebuilds, so macOS retains the permission.
-
-### Screen & System Audio Recording permission keeps prompting or is denied
-
-On macOS 15, ScreenCaptureKit permission is tracked per app bundle in the TCC database. If the permission dialog keeps reappearing, or you see **"Screen & System Audio Recording permission denied"** after clicking Allow, the TCC entry for ScribeBuddy is likely stuck in a denied state (this can happen with unsigned apps after a rebuild).
-
-**Reset the permission and try again:**
+If you've already done Step 1 but the permission is stuck in a denied state, reset it and re-grant:
 
 ```bash
 tccutil reset ScreenCapture ai.scribebuddy.app
 ```
 
-Then relaunch ScribeBuddy. The permission dialog will appear once — click **Allow**. After that it persists until you reset it again or reinstall.
+Relaunch the app and click **Allow** when prompted.
 
-If ScribeBuddy is not listed under **System Settings → Privacy & Security → Screen & System Audio Recording**, start the app first (so macOS registers it), then check the list.
+### App isn't listed in Screen & System Audio Recording settings
 
-### Microphone not captured / no "You" segments
+Start the app first (so macOS registers it), then open **System Settings → Privacy & Security → Screen & System Audio Recording**.
 
-1. Open **System Settings → Privacy & Security → Microphone** and confirm ScribeBuddy is enabled.
-2. If it's missing from the list, quit the app, grant the permission in the system dialog on next launch, then verify it appears.
+### Microphone not captured
 
-### Whisper model not found
+Open **System Settings → Privacy & Security → Microphone** and confirm ScribeBuddy is enabled.
 
-Run the app, go to **Settings**, select a model size, and click **Download Model** (↙ button). The model downloads to `~/Library/Application Support/ai.scribebuddy.app/` and is reused across launches.
+### "Apple cannot verify" on every launch
 
-### App blocked by Gatekeeper ("Apple cannot verify…")
-
-The app is unsigned. After the first block:
-
-1. Open **System Settings → Privacy & Security**
-2. Scroll down to the "ScribeBuddy was blocked" notice
-3. Click **Open Anyway**
-
-## First Run
-
-1. Open ScribeBuddy from `/Applications` (or the `.app` bundle)
-2. In Settings, choose a **model size** (start with `small` — best speed/accuracy tradeoff)
-3. Click **Download Model** and wait for it to complete
-4. Select your **meeting app** from the dropdown (e.g. Google Chrome, Zoom)
-5. Click **Start** before joining your meeting
-6. When done, click **Stop** — transcript is auto-saved and available for Markdown export
+Make sure you completed Step 1 (local signing certificate). Without it, Gatekeeper re-blocks the app after every rebuild.
 
 ## Architecture
 
 ```
-[Microphone]   ──► cpal (SPSC ring buffer) ──┐
-                                             ├──► AudioProcessor ──► Transcriber ──► Transcript
-[Meeting App]  ──► ScreenCaptureKit ─────────┘        │
-                   (48 kHz stereo → mono)         rubato resampler
-                                                  (source Hz → 16 kHz)
-                                                       │
-                                                  WhisperEngine
-                                                  (Metal / CPU)
+[Microphone]   ──► cpal (ring buffer) ──┐
+                                        ├──► AudioProcessor ──► Transcriber ──► Transcript
+[Meeting App]  ──► ScreenCaptureKit ────┘        │
+                   (48 kHz stereo → mono)    rubato resampler
+                                             (source Hz → 16 kHz)
+                                                  │
+                                             WhisperEngine
+                                             (Metal / CPU)
 ```
 
-**Key design points:**
 - `AudioProcessor::run_with<T: Transcriber>` is generic over the transcription engine — `WhisperEngine` in production, `MockTranscriber` in tests
-- Session lifecycle (`Idle → Recording → Paused → Stopped`) is owned entirely by `SessionManager`; Tauri commands are thin wrappers
-- All file writes (config, transcripts) use write-to-temp-then-rename for crash safety
-
-## Project Structure
-
-```
-├── .cargo/config.toml            # MACOSX_DEPLOYMENT_TARGET=15.0
-├── Cargo.toml                    # Workspace root
-├── crates/scribebuddy-core/      # Platform-independent core library
-│   ├── src/
-│   │   ├── audio/
-│   │   │   ├── capture.rs        # AudioSource trait, ring buffer helpers
-│   │   │   ├── cpal_capture.rs   # Microphone via CPAL
-│   │   │   ├── screencapturekit.rs  # System audio via SCK
-│   │   │   ├── resampler.rs      # rubato SincFixedIn wrapper
-│   │   │   └── processor.rs      # AudioProcessor, run_with<T: Transcriber>
-│   │   ├── transcription/
-│   │   │   ├── mod.rs            # Transcriber trait
-│   │   │   ├── engine.rs         # WhisperEngine (implements Transcriber)
-│   │   │   ├── model.rs          # ModelManager — download, path resolution
-│   │   │   └── segment.rs        # TranscriptSegment helpers
-│   │   ├── session/
-│   │   │   ├── manager.rs        # SessionManager state machine
-│   │   │   └── transcript.rs     # TranscriptAccumulator
-│   │   ├── export/
-│   │   │   └── markdown.rs       # Markdown exporter
-│   │   └── lib.rs                # Public types: SessionConfig, Speaker, ModelSize …
-│   └── tests/
-│       └── pipeline.rs           # Integration tests (silence gate, segment flow)
-├── src-tauri/                    # Tauri 2 application shell
-│   ├── icons/                    # App icons (SVG source + PNG exports)
-│   ├── src/
-│   │   ├── commands.rs           # 17 Tauri commands
-│   │   ├── state.rs              # AppState (config, session, accumulated segments)
-│   │   ├── tray.rs               # System tray setup
-│   │   └── lib.rs                # Tauri builder, window events
-│   ├── Entitlements.plist        # Microphone + network entitlements
-│   └── tauri.conf.json           # Bundle config, macOS minimum 15.0
-└── frontend/                     # Web UI (vanilla HTML/CSS/JS, no framework)
-    └── src/
-        ├── main.js               # App bootstrap, Tauri event listeners
-        ├── transcript.js         # Live transcript rendering
-        ├── controls.js           # Record/pause/stop controls
-        └── settings.js           # Settings panel, model download UI
-```
+- Session lifecycle (`Idle → Recording → Paused → Stopped`) is owned by `SessionManager`; Tauri commands are thin wrappers
+- All file writes use write-to-temp-then-rename for crash safety
 
 ## Stack
 
-| Crate / Library | Purpose |
-|-----------------|---------|
+| Crate | Purpose |
+|-------|---------|
 | whisper-rs 0.16 | Whisper.cpp bindings with Metal acceleration |
-| screencapturekit 0.3 | macOS system audio capture (ScreenCaptureKit) |
-| cpal 0.15 | Cross-platform microphone capture |
-| rubato 0.14 | High-quality audio resampling (source → 16 kHz) |
-| ringbuf 0.4 | Lock-free SPSC ring buffers between audio threads |
-| crossbeam-channel 0.5 | Thread-safe segment/error channels |
-| parking_lot 0.12 | Mutex/RwLock for shared state |
+| screencapturekit 0.3 | macOS system audio capture |
+| cpal 0.15 | Microphone capture |
+| rubato 0.14 | Audio resampling to 16 kHz |
+| ringbuf 0.4 | Lock-free SPSC ring buffers |
 | Tauri 2 | App framework, system tray, native dialogs |
-| tauri-plugin-dialog 2 | Native save-file dialog for Markdown export |
-
-## Export Format
-
-```markdown
-# Meeting Transcript
-
-**Date:** 2026-05-02
-**Duration:** 00:45:12
-
----
-
-**[00:00:05] You:**
-Hello, thanks for joining the call today.
-
-**[00:00:12] Remote:**
-Hi, glad to be here. Let me share my screen.
-
----
-*Transcribed by ScribeBuddy*
-```
 
 ## License
 
